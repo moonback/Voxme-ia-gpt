@@ -144,6 +144,7 @@ export class GeminiLiveAudio {
       this.callbacks.onError(String(message.error.message || "Erreur du serveur Gemini Live."));
       return;
     }
+    if (message.goAway) { this.log("live.session.go_away", { timeLeft: message.goAway.timeLeft || null }, "warn"); this.callbacks.onStatus("Renouvellement de connexion requis bientôt"); }
     const content = message.serverContent;
     if (!content) {
       this.log("live.server.message.unhandled", { keys: Object.keys(message).slice(0, 12) }, "debug");
@@ -152,12 +153,13 @@ export class GeminiLiveAudio {
     if (content.inputTranscription?.text) { this.log("live.transcription.input", { chars: String(content.inputTranscription.text).length }, "debug"); this.callbacks.onTranscript("user", String(content.inputTranscription.text)); }
     if (content.outputTranscription?.text) { this.log("live.transcription.output", { chars: String(content.outputTranscription.text).length }, "debug"); this.callbacks.onTranscript("chloe", String(content.outputTranscription.text)); }
     if (content.interrupted) { this.log("live.output.interrupted", { queuedChunks: this.playing.size }, "warn"); this.stopPlayback(); }
+    if (content.turnComplete) this.log("live.turn.completed", { chunksReceived: this.audioChunksReceived }, "info");
+    if (content.generationComplete) this.log("live.generation.completed", {}, "info");
     const parts = content.modelTurn?.parts || [];
     for (const part of parts) {
       const encoded = part.inlineData?.data;
       if (encoded && part.inlineData?.mimeType?.startsWith("audio/pcm")) { this.audioChunksReceived++; if (this.audioChunksReceived === 1 || this.audioChunksReceived % 25 === 0) this.log("live.audio.output.progress", { chunksReceived: this.audioChunksReceived, queuedChunks: this.playing.size }, "debug"); this.playPcm(encoded); }
     }
-    if (message.goAway) { this.log("live.session.go_away", { timeLeft: message.goAway.timeLeft || null }, "warn"); this.callbacks.onStatus("Renouvellement de connexion requis bientôt"); }
   }
 
   private playPcm(encoded: string) {
