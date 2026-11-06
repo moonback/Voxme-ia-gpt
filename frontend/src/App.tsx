@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { Activity, ArrowUp, BookOpen, Brain, Check, ChevronDown, CircleHelp, Command, FileText, Headphones, LayoutDashboard, Library, Menu, Mic, Plus, Settings, Shield, Sparkles, Square, Users, WandSparkles, X } from "lucide-react";
 import { isSupabaseConfigured, supabase } from "./lib/supabase";
 import { GeminiLiveAudio } from "./lib/geminiLive";
+import { errorDetails, installBrowserDiagnostics, logConversationEvent, newDiagnosticId } from "./lib/diagnostics";
 import StudioPage from "./components/StudioPage";
 import ProgramsPage from "./components/ProgramsPage";
 import MemoryPage from "./components/MemoryPage";
@@ -56,6 +57,8 @@ function WorkspaceApp() {
 
   useEffect(() => {
     let alive = true;
+    let uninstallDiagnostics: (() => void) | undefined;
+    void supabase?.auth.getUser().then(({ data }) => { if (alive && data.user) uninstallDiagnostics = installBrowserDiagnostics(data.user.id); });
     async function restoreLatestSession() {
       if (!supabase) { setLoadingSession(false); return; }
       const { data: auth } = await supabase.auth.getUser();
@@ -71,7 +74,7 @@ function WorkspaceApp() {
       if (alive) setLoadingSession(false);
     }
     void restoreLatestSession();
-    return () => { alive = false; };
+    return () => { alive = false; uninstallDiagnostics?.(); };
   }, []);
 
   async function sendMessage() {
@@ -79,6 +82,9 @@ function WorkspaceApp() {
     if (!text || thinking || !supabase) return;
     const now = () => new Date().toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
     const history = messages.map((m) => `${m.agent}: ${m.text}`).join("\n").slice(-7000);
+    const correlationId = newDiagnosticId();
+    const conversationStarted = performance.now();
+    logConversationEvent({ source: "conversation", event: "conversation.turn.started", userId: (await supabase.auth.getUser()).data.user?.id, sessionId, correlationId, metadata: { inputChars: text.length, historyChars: history.length, agentCount: 3 } });
     setDraft(""); setApiError(""); setThinking(true);
     setSessionTitle(text.length > 42 ? text.slice(0, 42) + "…" : text);
     try {
@@ -89,28 +95,39 @@ function WorkspaceApp() {
         const { data: created, error } = await supabase.from("sessions").insert({ user_id: auth.user.id, title: text.slice(0, 120) }).select("id").single();
         if (error || !created) throw new Error(error?.message || "Impossible de créer la session.");
         activeSessionId = created.id; setSessionId(activeSessionId);
+        logConversationEvent({ source: "supabase", event: "conversation.session.created", userId: auth.user.id, sessionId: activeSessionId, correlationId });
       } else {
         const { error } = await supabase.from("sessions").update({ title: text.slice(0, 120), updated_at: new Date().toISOString() }).eq("id", activeSessionId);
         if (error) throw new Error(error.message);
       }
       const { error: saveUserError } = await supabase.from("messages").insert({ session_id: activeSessionId, speaker: "user", content: text });
-      if (saveUserError) throw new Error(saveUserError.message);
+      if (saveUserError) { logConversationEvent({ level: "error", source: "supabase", event: "conversation.user_message.persist_failed", userId: auth.user.id, sessionId: activeSessionId, correlationId, ...errorDetails(saveUserError) }); throw new Error(saveUserError.message); }
+      logConversationEvent({ source: "supabase", event: "conversation.user_message.persisted", userId: auth.user.id, sessionId: activeSessionId, correlationId });
       setMessages((items) => [...items, { id: Date.now(), agent: "Vous", text, time: now() }]);
       let context = history + "\nVous: " + text;
       for (const [agent, speaker] of [["Chloé", "chloe"], ["Thomas", "thomas"], ["Inès", "ines"]] as const) {
+        const turnId = newDiagnosticId();
+        const agentStarted = performance.now();
+        logConversationEvent({ source: "conversation", event: "agent.request.started", userId: auth.user.id, sessionId: activeSessionId, correlationId, turnId, metadata: { agent, contextChars: context.length } });
         const accessToken = (await supabase.auth.getSession()).data.session?.access_token;
         if (!accessToken) throw new Error("Session expirée. Reconnecte-toi.");
-        const response = await fetch("/api/debate/respond", { method: "POST", headers: { "Content-Type": "application/json", "Authorization": `Bearer ${accessToken}` }, body: JSON.stringify({ message: text, agent, context }) });
+        const response = await fetch("/api/debate/respond", { method: "POST", headers: { "Content-Type": "application/json", "Authorization": `Bearer ${accessToken}`, "x-request-id": turnId }, body: JSON.stringify({ message: text, agent, context }) });
         const payload = await response.json();
-        if (!response.ok) throw new Error(payload.error || `Erreur API (${response.status})`);
+        if (!response.ok) { logConversationEvent({ level: "error", source: "conversation", event: "agent.request.failed", userId: auth.user.id, sessionId: activeSessionId, correlationId, turnId, durationMs: Math.round(performance.now() - agentStarted), metadata: { agent, httpStatus: response.status, providerError: payload.error || "unknown" } }); throw new Error(payload.error || `Erreur API (${response.status})`); }
         const answer = String(payload.text || "").trim();
         const { error } = await supabase.from("messages").insert({ session_id: activeSessionId, speaker, content: answer });
-        if (error) throw new Error(`Réponse générée mais non enregistrée : ${error.message}`);
+        if (error) { logConversationEvent({ level: "error", source: "supabase", event: "agent.response.persist_failed", userId: auth.user.id, sessionId: activeSessionId, correlationId, turnId, durationMs: Math.round(performance.now() - agentStarted), metadata: { agent, code: error.code } }); throw new Error(`Réponse générée mais non enregistrée : ${error.message}`); }
+        logConversationEvent({ source: "conversation", event: "agent.request.completed", userId: auth.user.id, sessionId: activeSessionId, correlationId, turnId, durationMs: Math.round(performance.now() - agentStarted), metadata: { agent, responseChars: answer.length, httpStatus: response.status } });
         setMessages((items) => [...items, { id: Date.now() + Math.random(), agent, text: answer, time: now() }]);
         context += `\n${agent}: ${answer}`;
       }
-    } catch (error) { setApiError(error instanceof Error ? error.message : "Impossible de contacter VOXME."); }
-    finally { setThinking(false); }
+    } catch (error) {
+      logConversationEvent({ level: "error", source: "conversation", event: "conversation.turn.failed", sessionId, correlationId, durationMs: Math.round(performance.now() - conversationStarted), ...errorDetails(error) });
+      setApiError(error instanceof Error ? error.message : "Impossible de contacter VOXME.");
+    } finally {
+      logConversationEvent({ source: "conversation", event: "conversation.turn.finished", sessionId, correlationId, durationMs: Math.round(performance.now() - conversationStarted) });
+      setThinking(false);
+    }
   }
 
   async function toggleLive() {
@@ -121,10 +138,16 @@ function WorkspaceApp() {
       return;
     }
     if (!supabase) return;
+    const { data: liveAuth } = await supabase.auth.getUser();
+    const liveUserId = liveAuth.user?.id;
+    if (!liveUserId) { setApiError("Session expirée. Reconnecte-toi."); return; }
     const client = new GeminiLiveAudio({
-      onStatus: setLiveStatus,
-      onError: (message) => setApiError(message),
+      userId: liveUserId,
+      sessionId,
+      onStatus: (status) => { setLiveStatus(status); logConversationEvent({ source: "gemini-live", event: "live.status", userId: liveUserId, sessionId, metadata: { status } }); },
+      onError: (message) => { logConversationEvent({ level: "error", source: "gemini-live", event: "live.client.error", userId: liveUserId, sessionId, message }); setApiError(message); },
       onTranscript: async (speaker, text) => {
+        logConversationEvent({ source: "gemini-live", event: "live.transcript.received", userId: liveUserId, sessionId, metadata: { speaker, chars: text.length } });
         const clean = text.trim();
         if (!clean) return;
         const agent = speaker === "user" ? "Vous" : "Chloé";
@@ -139,7 +162,8 @@ function WorkspaceApp() {
           activeId = data.id; setSessionId(activeId); setSessionTitle("Conversation vocale");
         }
         const { error } = await supabase.from("messages").insert({ session_id: activeId, speaker, content: clean, transcript: clean });
-        if (error) setApiError("Transcription non enregistrée : " + error.message);
+        if (error) { logConversationEvent({ level: "error", source: "supabase", event: "live.transcript.persist_failed", userId: liveUserId, sessionId: activeId, ...errorDetails(error) }); setApiError("Transcription non enregistrée : " + error.message); }
+        else logConversationEvent({ source: "supabase", event: "live.transcript.persisted", userId: liveUserId, sessionId: activeId, metadata: { speaker, chars: clean.length } });
       },
     });
     liveClient.current = client;
@@ -148,6 +172,7 @@ function WorkspaceApp() {
       await client.start();
       setListening(true);
     } catch (error) {
+      logConversationEvent({ level: "error", source: "gemini-live", event: "live.start.failed", userId: liveUserId, sessionId, ...errorDetails(error) });
       setApiError(error instanceof Error ? error.message : "Impossible de démarrer le mode vocal.");
       await client.stop();
       liveClient.current = null;
