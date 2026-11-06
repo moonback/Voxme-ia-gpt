@@ -22,14 +22,18 @@ export class GeminiLiveAudio {
   private nextPlayTime = 0;
   private stopped = false;
   private readonly correlationId = newDiagnosticId();
+  private currentSessionId: string | null;
   private audioChunksReceived = 0;
   private audioChunksSent = 0;
 
   private log(event: string, metadata: Record<string, unknown> = {}, level: "debug" | "info" | "warn" | "error" = "info", durationMs?: number) {
-    logConversationEvent({ source: "gemini-live", event, level, userId: this.callbacks.userId, sessionId: this.callbacks.sessionId, correlationId: this.correlationId, metadata, durationMs });
+    logConversationEvent({ source: "gemini-live", event, level, userId: this.callbacks.userId, sessionId: this.currentSessionId || this.callbacks.sessionId, correlationId: this.correlationId, metadata, durationMs });
   }
 
-  constructor(private callbacks: LiveCallbacks) {}
+  constructor(private callbacks: LiveCallbacks) { this.currentSessionId = callbacks.sessionId || null; }
+
+  setSessionId(sessionId: string) { this.currentSessionId = sessionId; }
+
 
   async start() {
     if (!supabase) throw new Error("Supabase n’est pas configuré.");
