@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { Activity, ArrowUp, BookOpen, Brain, Check, ChevronDown, CircleHelp, Command, FileText, Headphones, LayoutDashboard, Library, Menu, Mic, Plus, Settings, Shield, Sparkles, Square, Users, WandSparkles, X } from "lucide-react";
 import { isSupabaseConfigured, supabase } from "./lib/supabase";
+import { GeminiLiveAudio } from "./lib/geminiLive";
 
 type Agent = "Chloé" | "Thomas" | "Inès";
 type Message = { id: number | string; agent: Agent | "Vous"; text: string; time: string };
@@ -37,6 +38,8 @@ function WorkspaceApp() {
   const [activeNav, setActiveNav] = useState("Conversation");
   const [mobileMenu, setMobileMenu] = useState(false);
   const [listening, setListening] = useState(false);
+  const [liveStatus, setLiveStatus] = useState("Mode vocal prêt");
+  const liveClient = useRef<GeminiLiveAudio | null>(null);
   const [thinking, setThinking] = useState(false);
   const [apiError, setApiError] = useState("");
   const [showDecision, setShowDecision] = useState(false);
@@ -98,6 +101,50 @@ function WorkspaceApp() {
     finally { setThinking(false); }
   }
 
+  async function toggleLive() {
+    if (liveClient.current) {
+      await liveClient.current.stop();
+      liveClient.current = null;
+      setListening(false);
+      return;
+    }
+    if (!supabase) return;
+    const client = new GeminiLiveAudio({
+      onStatus: setLiveStatus,
+      onError: (message) => setApiError(message),
+      onTranscript: async (speaker, text) => {
+        const clean = text.trim();
+        if (!clean) return;
+        const agent = speaker === "user" ? "Vous" : "Chloé";
+        const time = new Date().toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
+        setMessages((items) => [...items, { id: Date.now() + Math.random(), agent, text: clean, time }]);
+        const { data: auth } = await supabase.auth.getUser();
+        if (!auth.user) return;
+        let activeId = sessionId;
+        if (!activeId) {
+          const { data, error } = await supabase.from("sessions").insert({ user_id: auth.user.id, title: "Conversation vocale" }).select("id").single();
+          if (error || !data) { setApiError(error?.message || "Impossible de créer la session vocale."); return; }
+          activeId = data.id; setSessionId(activeId); setSessionTitle("Conversation vocale");
+        }
+        const { error } = await supabase.from("messages").insert({ session_id: activeId, speaker, content: clean, transcript: clean });
+        if (error) setApiError("Transcription non enregistrée : " + error.message);
+      },
+    });
+    liveClient.current = client;
+    try {
+      setApiError("");
+      await client.start();
+      setListening(true);
+    } catch (error) {
+      setApiError(error instanceof Error ? error.message : "Impossible de démarrer le mode vocal.");
+      await client.stop();
+      liveClient.current = null;
+      setListening(false);
+    }
+  }
+
+  useEffect(() => () => { void liveClient.current?.stop(); }, []);
+
   function addDecision() {
     const decision = window.prompt("Quelle décision souhaites-tu enregistrer ?");
     if (decision?.trim()) { setDecisions((items) => [...items, decision.trim()]); void (async () => { if (!supabase || !sessionId) return; const { data: auth } = await supabase.auth.getUser(); if (!auth.user) return; const { error } = await supabase.from("artifacts").insert({ session_id: sessionId, user_id: auth.user.id, kind: "decision", title: decision.trim(), content: { text: decision.trim() }, status: "accepted", validated_by: auth.user.id, validated_at: new Date().toISOString() }); if (error) setApiError("Décision non enregistrée : " + error.message); })(); }
@@ -130,7 +177,7 @@ function WorkspaceApp() {
                 {messages.map((message) => <article className={`message ${message.agent === "Vous" ? "user-message" : ""}`} key={message.id}><div className={`message-avatar ${message.agent === "Vous" ? "you" : agents.find(a => a.name === message.agent)?.color}`}>{message.agent === "Vous" ? "M" : message.agent[0]}</div><div className="message-body"><div className="message-meta"><strong>{message.agent}</strong><time>{message.time}</time></div><p>{message.text}</p></div></article>)}
                 {messages.length === initialMessages.length && <div className="starter-prompts"><button onClick={() => setDraft("Aide-moi à évaluer cette idée : ")}>Évaluer une idée <ArrowUp size={13}/></button><button onClick={() => setDraft("Challenge mon plan et trouve ses angles morts : ")}>Challenger un plan <ArrowUp size={13}/></button><button onClick={() => setDraft("Aide-moi à prendre une décision entre : ")}>Prendre une décision <ArrowUp size={13}/></button></div>}
               </div>
-              <div className="composer-wrap"><div className="composer"><textarea value={draft} onChange={(e) => setDraft(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMessage(); } }} placeholder="Présente ton idée, pose une question ou expose un dilemme…" rows={2}/><div className="composer-actions"><div><button className={`icon-button mic-button ${listening ? "recording" : ""}`} onClick={() => setListening(v => !v)} title="Activer le mode vocal (interface en préparation)"><Mic size={17}/></button><span className="composer-hint">Entrée pour envoyer · Maj + Entrée pour une ligne</span></div><button className="send-button" onClick={sendMessage} disabled={!draft.trim() || thinking || loadingSession}><ArrowUp size={17}/></button></div></div><div className="composer-foot"><span><Shield size={12}/> Tes échanges restent privés</span><span>Les décisions restent sous ton contrôle</span></div></div>
+              <div className="composer-wrap"><div className="composer"><textarea value={draft} onChange={(e) => setDraft(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMessage(); } }} placeholder="Présente ton idée, pose une question ou expose un dilemme…" rows={2}/><div className="composer-actions"><div><button className={`icon-button mic-button ${listening ? "recording" : ""}`} onClick={() => void toggleLive()} title={listening ? "Arrêter le mode vocal" : "Démarrer Gemini Live"}><Mic size={17}/></button><span className="composer-hint">{listening ? liveStatus : "Entrée pour envoyer · Maj + Entrée pour une ligne"}</span></div><button className="send-button" onClick={sendMessage} disabled={!draft.trim() || thinking || loadingSession}><ArrowUp size={17}/></button></div></div><div className="composer-foot"><span><Shield size={12}/> Tes échanges restent privés</span><span>Les décisions restent sous ton contrôle</span></div></div>
             </section>
             <aside className="insight-panel"><div className="panel-title"><div><span className="eyebrow">ESPACE DE RÉFLEXION</span><h2>En un coup d'œil</h2></div><button className="icon-button"><FileText size={17}/></button></div><div className="insight-card focus-card"><span className="card-kicker"><Sparkles size={13}/> FIL CONDUCTEUR</span><h3>Fais émerger la bonne question.</h3><p>Expose ton sujet pour que les trois regards puissent commencer à le confronter.</p></div><div className="panel-section"><div className="section-heading"><strong>Décisions</strong><button onClick={addDecision}><Plus size={15}/> Ajouter</button></div>{decisions.length === 0 ? <div className="empty-state"><Check size={16}/><span>Aucune décision validée pour le moment.</span></div> : decisions.map((d, i) => <div className="decision-item" key={i}><Check size={15}/><span>{d}</span></div>)}</div><div className="panel-section"><div className="section-heading"><strong>À explorer</strong><span className="muted-count">3 pistes</span></div><div className="explore-item"><span className="explore-dot violet-dot"/><span>Hypothèses à vérifier</span></div><div className="explore-item"><span className="explore-dot blue-dot"/><span>Risques et objections</span></div><div className="explore-item"><span className="explore-dot amber-dot"/><span>Prochaines actions</span></div></div><div className="panel-footer"><Library size={15}/><span>Les notes détaillées seront accessibles dans le Notebook.</span></div></aside>
           </div>
