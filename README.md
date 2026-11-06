@@ -21,7 +21,7 @@ VOXME est une plateforme de délibération vocale multi-agents : Chloé construi
 - Une clé Gemini (pour les endpoints IA)
 
 ### Configuration
-Copier `.env.example` vers `.env` à la racine pour le backend Rust, puis vers `frontend/.env` pour Vite. Dans `frontend/.env`, seules `VITE_SUPABASE_URL` et `VITE_SUPABASE_ANON_KEY` sont nécessaires. Renseigner aussi `SUPABASE_URL`, `SUPABASE_ANON_KEY` et `GEMINI_API_KEY` dans le `.env` racine. Ne jamais exposer `GEMINI_API_KEY` ni `SUPABASE_SERVICE_ROLE_KEY` dans le frontend.
+Copier `.env.example` vers `.env` à la racine pour le backend Rust. Copier `frontend/.env.example` vers `frontend/.env` pour Vite. Renseigner `SUPABASE_URL`, `SUPABASE_ANON_KEY` et `GEMINI_API_KEY` dans le `.env` racine ; le fichier frontend ne contient que l’URL Supabase et la clé anon publique. Ne jamais exposer `GEMINI_API_KEY` ni `SUPABASE_SERVICE_ROLE_KEY` dans le frontend.
 
 ### Installer et lancer
 ```bash
