@@ -1,5 +1,5 @@
 import { supabase } from "./supabase";
-import { logConversationEvent, newDiagnosticId } from "./diagnostics";
+import { errorDetails, logConversationEvent, newDiagnosticId } from "./diagnostics";
 
 export type LiveTranscriptSpeaker = "user" | "chloe";
 
@@ -72,7 +72,7 @@ export class GeminiLiveAudio {
       };
       this.socket!.onmessage = (event) => {
         let message: any;
-        try { message = JSON.parse(String(event.data)); } catch (error) { this.log("live.websocket.message.parse_failed", { dataType: typeof event.data }, "error"); return; }
+        try { message = JSON.parse(String(event.data)); } catch (error) { this.log("live.websocket.message.parse_failed", { dataType: typeof event.data, ...errorDetails(error) }, "error"); return; }
         if (message.setupComplete) {
           window.clearTimeout(timeout);
           this.log("live.setup.completed", {}, "info", Math.round(performance.now() - startedAt));
