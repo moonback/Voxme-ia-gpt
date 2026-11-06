@@ -1,9 +1,9 @@
-import React, { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { Activity, ArrowUp, BookOpen, Brain, Check, ChevronDown, CircleHelp, Command, FileText, Headphones, LayoutDashboard, Library, Menu, Mic, Plus, Settings, Shield, Sparkles, Square, Users, WandSparkles, X } from "lucide-react";
 import { isSupabaseConfigured, supabase } from "./lib/supabase";
 
 type Agent = "Chloé" | "Thomas" | "Inès";
-type Message = { id: number; agent: Agent | "Vous"; text: string; time: string };
+type Message = { id: number | string; agent: Agent | "Vous"; text: string; time: string };
 
 const agents = [
   { name: "Chloé" as const, role: "Vision & animation", color: "violet", initials: "C" },
@@ -85,7 +85,7 @@ function WorkspaceApp() {
       setMessages((items) => [...items, { id: Date.now(), agent: "Vous", text, time: now() }]);
       let context = history + "\nVous: " + text;
       for (const [agent, speaker] of [["Chloé", "chloe"], ["Thomas", "thomas"], ["Inès", "ines"]] as const) {
-        const response = await fetch("/api/debate/respond", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ message: text, agent, context }) });
+        const accessToken = (await supabase.auth.getSession()).data.session?.access_token;\n        if (!accessToken) throw new Error("Session expirée. Reconnecte-toi.");\n        const response = await fetch("/api/debate/respond", { method: "POST", headers: { "Content-Type": "application/json", "Authorization": `Bearer ${accessToken}` }, body: JSON.stringify({ message: text, agent, context }) });
         const payload = await response.json();
         if (!response.ok) throw new Error(payload.error || `Erreur API (${response.status})`);
         const answer = String(payload.text || "").trim();
@@ -148,7 +148,7 @@ function AuthScreen() {
   const [email, setEmail] = useState(""); const [password, setPassword] = useState("");
   const [mode, setMode] = useState<"signin" | "signup">("signin");
   const [busy, setBusy] = useState(false); const [error, setError] = useState(""); const [notice, setNotice] = useState("");
-  async function submit(event: React.FormEvent) {
+  async function submit(event: FormEvent) {
     event.preventDefault(); if (!supabase) return; setBusy(true); setError(""); setNotice("");
     try {
       const result = mode === "signin" ? await supabase.auth.signInWithPassword({ email: email.trim(), password }) : await supabase.auth.signUp({ email: email.trim(), password });
