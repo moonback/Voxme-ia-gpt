@@ -4,6 +4,8 @@ import { isSupabaseConfigured, supabase } from "./lib/supabase";
 import { GeminiLiveAudio } from "./lib/geminiLive";
 import StudioPage from "./components/StudioPage";
 import ProgramsPage from "./components/ProgramsPage";
+import MemoryPage from "./components/MemoryPage";
+import NotebookPage from "./components/NotebookPage";
 
 type Agent = "Chloé" | "Thomas" | "Inès";
 type Message = { id: number | string; agent: Agent | "Vous"; text: string; time: string };
@@ -184,7 +186,7 @@ function WorkspaceApp() {
             </section>
             <aside className="insight-panel"><div className="panel-title"><div><span className="eyebrow">ESPACE DE RÉFLEXION</span><h2>En un coup d'œil</h2></div><button className="icon-button"><FileText size={17}/></button></div><div className="insight-card focus-card"><span className="card-kicker"><Sparkles size={13}/> FIL CONDUCTEUR</span><h3>Fais émerger la bonne question.</h3><p>Expose ton sujet pour que les trois regards puissent commencer à le confronter.</p></div><div className="panel-section"><div className="section-heading"><strong>Décisions</strong><button onClick={addDecision}><Plus size={15}/> Ajouter</button></div>{decisions.length === 0 ? <div className="empty-state"><Check size={16}/><span>Aucune décision validée pour le moment.</span></div> : decisions.map((d, i) => <div className="decision-item" key={i}><Check size={15}/><span>{d}</span></div>)}</div><div className="panel-section"><div className="section-heading"><strong>À explorer</strong><span className="muted-count">3 pistes</span></div><div className="explore-item"><span className="explore-dot violet-dot"/><span>Hypothèses à vérifier</span></div><div className="explore-item"><span className="explore-dot blue-dot"/><span>Risques et objections</span></div><div className="explore-item"><span className="explore-dot amber-dot"/><span>Prochaines actions</span></div></div><div className="panel-footer"><Library size={15}/><span>Les notes détaillées seront accessibles dans le Notebook.</span></div></aside>
           </div>
-        ) : activeNav === "Studio" ? <StudioPage/> : activeNav === "Accompagnements" ? <ProgramsPage/> : (
+        ) : activeNav === "Studio" ? <StudioPage/> : activeNav === "Accompagnements" ? <ProgramsPage/> : activeNav === "Mémoire" ? <MemoryPage/> : activeNav === "Notebook" ? <NotebookPage/> : (
           <section className="module-placeholder"><div className="placeholder-icon"><WandSparkles size={26}/></div><span className="eyebrow">VOXME WORKSPACE</span><h1>{activeNav}</h1><p>Ce module est prévu dans l'architecture VOXME. Son implémentation fonctionnelle sera ajoutée dans les prochaines phases.</p><button className="outline-button" onClick={() => setActiveNav("Conversation")}>Retourner à la conversation</button></section>
         )}
       </main>
