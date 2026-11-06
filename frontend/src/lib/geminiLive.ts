@@ -72,7 +72,7 @@ export class GeminiLiveAudio {
       };
       this.socket!.onmessage = (event) => {
         let message: any;
-        try { message = JSON.parse(String(event.data)); } catch { return; }
+        try { message = JSON.parse(String(event.data)); } catch (error) { this.log("live.websocket.message.parse_failed", { dataType: typeof event.data }, "error"); return; }
         if (message.setupComplete) {
           window.clearTimeout(timeout);
           this.log("live.setup.completed", {}, "info", Math.round(performance.now() - startedAt));
@@ -139,8 +139,16 @@ export class GeminiLiveAudio {
   }
 
   private handleServerMessage(message: any) {
+    if (message.error) {
+      this.log("live.server.error", { code: message.error.code || null, status: message.error.status || null, detail: message.error.message || "Gemini Live error" }, "error");
+      this.callbacks.onError(String(message.error.message || "Erreur du serveur Gemini Live."));
+      return;
+    }
     const content = message.serverContent;
-    if (!content) return;
+    if (!content) {
+      this.log("live.server.message.unhandled", { keys: Object.keys(message).slice(0, 12) }, "debug");
+      return;
+    }
     if (content.inputTranscription?.text) { this.log("live.transcription.input", { chars: String(content.inputTranscription.text).length }, "debug"); this.callbacks.onTranscript("user", String(content.inputTranscription.text)); }
     if (content.outputTranscription?.text) { this.log("live.transcription.output", { chars: String(content.outputTranscription.text).length }, "debug"); this.callbacks.onTranscript("chloe", String(content.outputTranscription.text)); }
     if (content.interrupted) { this.log("live.output.interrupted", { queuedChunks: this.playing.size }, "warn"); this.stopPlayback(); }
@@ -158,6 +166,7 @@ export class GeminiLiveAudio {
     const bytes = new Uint8Array(binary.length);
     for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
     const samples = new Int16Array(bytes.buffer);
+    if (samples.length === 0) { this.log("live.audio.output.empty_chunk", {}, "warn"); return; }
     const buffer = this.audioContext.createBuffer(1, samples.length, 24000);
     const channel = buffer.getChannelData(0);
     for (let i = 0; i < samples.length; i++) channel[i] = samples[i] / 32768;
