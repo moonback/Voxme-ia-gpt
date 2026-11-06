@@ -84,17 +84,21 @@ function WorkspaceApp() {
     const history = messages.map((m) => `${m.agent}: ${m.text}`).join("\n").slice(-7000);
     const correlationId = newDiagnosticId();
     const conversationStarted = performance.now();
-    logConversationEvent({ source: "conversation", event: "conversation.turn.started", userId: (await supabase.auth.getUser()).data.user?.id, sessionId, correlationId, metadata: { inputChars: text.length, historyChars: history.length, agentCount: 3 } });
+    logConversationEvent({ source: "conversation", event: "conversation.turn.started", sessionId, correlationId, metadata: { inputChars: text.length, historyChars: history.length, agentCount: 3 } });
+    let diagnosticUserId: string | undefined;
+    let diagnosticSessionId: string | null = sessionId;
     setDraft(""); setApiError(""); setThinking(true);
     setSessionTitle(text.length > 42 ? text.slice(0, 42) + "…" : text);
     try {
       const { data: auth, error: authError } = await supabase.auth.getUser();
       if (authError || !auth.user) throw new Error("Ta session a expiré. Reconnecte-toi.");
+      diagnosticUserId = auth.user.id;
+      logConversationEvent({ source: "conversation", event: "conversation.authenticated", userId: diagnosticUserId, sessionId: diagnosticSessionId, correlationId });
       let activeSessionId = sessionId;
       if (!activeSessionId) {
         const { data: created, error } = await supabase.from("sessions").insert({ user_id: auth.user.id, title: text.slice(0, 120) }).select("id").single();
         if (error || !created) throw new Error(error?.message || "Impossible de créer la session.");
-        activeSessionId = created.id; setSessionId(activeSessionId);
+        activeSessionId = created.id; diagnosticSessionId = activeSessionId; setSessionId(activeSessionId);
         logConversationEvent({ source: "supabase", event: "conversation.session.created", userId: auth.user.id, sessionId: activeSessionId, correlationId });
       } else {
         const { error } = await supabase.from("sessions").update({ title: text.slice(0, 120), updated_at: new Date().toISOString() }).eq("id", activeSessionId);
@@ -122,10 +126,10 @@ function WorkspaceApp() {
         context += `\n${agent}: ${answer}`;
       }
     } catch (error) {
-      logConversationEvent({ level: "error", source: "conversation", event: "conversation.turn.failed", sessionId, correlationId, durationMs: Math.round(performance.now() - conversationStarted), ...errorDetails(error) });
+      logConversationEvent({ level: "error", source: "conversation", event: "conversation.turn.failed", userId: diagnosticUserId, sessionId: diagnosticSessionId, correlationId, durationMs: Math.round(performance.now() - conversationStarted), ...errorDetails(error) });
       setApiError(error instanceof Error ? error.message : "Impossible de contacter VOXME.");
     } finally {
-      logConversationEvent({ source: "conversation", event: "conversation.turn.finished", sessionId, correlationId, durationMs: Math.round(performance.now() - conversationStarted) });
+      logConversationEvent({ source: "conversation", event: "conversation.turn.finished", userId: diagnosticUserId, sessionId: diagnosticSessionId, correlationId, durationMs: Math.round(performance.now() - conversationStarted) });
       setThinking(false);
     }
   }
