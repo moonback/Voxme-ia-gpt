@@ -16,6 +16,7 @@ Dernière mise à jour : 2026-11-06
 | Notebook | Collections, import et stockage privé PDF/DOCX/TXT/Markdown |
 | Communauté | Publications publiques, réactions et commentaires |
 | Sessions & Lab | Historique, statut, compteurs et transcript |
+| Diagnostics conversation | Logs structurés navigateur, orchestration, Gemini Live, audio, erreurs et durées ; timeline filtrable par session |
 | Administration | Console de diagnostic en lecture seule, protégée par le rôle server-managed admin |
 | MCP | Registre privé d'endpoints et activation/désactivation de l'entrée (pas d'exécution) |
 | PWA | Manifest, icône SVG, service worker et cache shell hors ligne |
@@ -30,6 +31,7 @@ Dernière mise à jour : 2026-11-06
 - Groupes communautaires, profils publics, invitations, modération et signalements.
 - Expérimentation Lab des prompts, personas, modèles et stratégies de débat.
 - Tests unitaires, tests d'intégration navigateur/microphone, tests RLS et validation complète du déploiement.
+- Corrélation des logs backend dans une plateforme centralisée (les événements backend sont actuellement dans stdout/stderr Rust, corrélés via x-request-id).
 
 ## Sécurité à conserver
 

@@ -1,8 +1,11 @@
 import { supabase } from "./supabase";
+import { errorDetails, logConversationEvent, newDiagnosticId } from "./diagnostics";
 
 export type LiveTranscriptSpeaker = "user" | "chloe";
 
 type LiveCallbacks = {
+  userId: string;
+  sessionId?: string | null;
   onStatus: (status: string) => void;
   onTranscript: (speaker: LiveTranscriptSpeaker, text: string) => void;
   onError: (message: string) => void;
@@ -18,31 +21,49 @@ export class GeminiLiveAudio {
   private playing = new Set<AudioBufferSourceNode>();
   private nextPlayTime = 0;
   private stopped = false;
+  private readonly correlationId = newDiagnosticId();
+  private currentSessionId: string | null;
+  private audioChunksReceived = 0;
+  private audioChunksSent = 0;
+  private lastInputTranscriptAt = 0;
+  private firstOutputChunkLogged = false;
 
-  constructor(private callbacks: LiveCallbacks) {}
+  private log(event: string, metadata: Record<string, unknown> = {}, level: "debug" | "info" | "warn" | "error" = "info", durationMs?: number) {
+    logConversationEvent({ source: "gemini-live", event, level, userId: this.callbacks.userId, sessionId: this.currentSessionId || this.callbacks.sessionId, correlationId: this.correlationId, metadata, durationMs });
+  }
+
+  constructor(private callbacks: LiveCallbacks) { this.currentSessionId = callbacks.sessionId || null; }
+
+  setSessionId(sessionId: string) { this.currentSessionId = sessionId; }
+
 
   async start() {
     if (!supabase) throw new Error("Supabase n’est pas configuré.");
     this.stopped = false;
+    const startedAt = performance.now();
+    this.log("live.start.requested");
     this.callbacks.onStatus("Connexion à Gemini Live…");
     const { data: auth, error: authError } = await supabase.auth.getSession();
     if (authError || !auth.session) throw new Error("Connecte-toi à VOXME avant de démarrer le vocal.");
     const tokenResponse = await fetch("/api/live/token", {
       method: "POST",
-      headers: { Authorization: `Bearer ${auth.session.access_token}` },
+      headers: { Authorization: `Bearer ${auth.session.access_token}`, "x-request-id": this.correlationId },
     });
     const tokenData = await tokenResponse.json();
+    this.log("live.token.response", { httpStatus: tokenResponse.status, ok: tokenResponse.ok });
     if (!tokenResponse.ok) throw new Error(tokenData.error || "Impossible d'obtenir un jeton vocal.");
     const ephemeralToken = String(tokenData.token || "");
     const model = String(tokenData.model || "gemini-3.8-live");
     if (!ephemeralToken) throw new Error("Le serveur n'a pas fourni de jeton Live.");
 
+    this.log("live.websocket.connecting", { model });
     this.socket = new WebSocket(
       `wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContentConstrained?access_token=${encodeURIComponent(ephemeralToken)}`,
     );
     await new Promise<void>((resolve, reject) => {
-      const timeout = window.setTimeout(() => reject(new Error("Délai dépassé pendant la connexion Gemini Live.")), 15000);
+      const timeout = window.setTimeout(() => { this.log("live.websocket.setup_timeout", { timeoutMs: 15000 }, "error", Math.round(performance.now() - startedAt)); reject(new Error("Délai dépassé pendant la connexion Gemini Live.")); }, 15000);
       this.socket!.onopen = () => {
+        this.log("live.websocket.open");
         this.callbacks.onStatus("Initialisation de la session vocale…");
         this.socket!.send(JSON.stringify({
           setup: {
@@ -53,19 +74,22 @@ export class GeminiLiveAudio {
       };
       this.socket!.onmessage = (event) => {
         let message: any;
-        try { message = JSON.parse(String(event.data)); } catch { return; }
+        try { message = JSON.parse(String(event.data)); } catch (error) { this.log("live.websocket.message.parse_failed", { dataType: typeof event.data, ...errorDetails(error) }, "error"); return; }
         if (message.setupComplete) {
           window.clearTimeout(timeout);
-          void this.startMicrophone().then(resolve).catch(reject);
+          this.log("live.setup.completed", {}, "info", Math.round(performance.now() - startedAt));
+          void this.startMicrophone().then(() => { this.log("live.start.completed", { sampleRate: this.audioContext?.sampleRate }, "info", Math.round(performance.now() - startedAt)); resolve(); }).catch(reject);
           return;
         }
         this.handleServerMessage(message);
       };
-      this.socket!.onerror = () => {
+      this.socket!.onerror = (event) => {
+        this.log("live.websocket.error", { eventType: event.type }, "error");
         window.clearTimeout(timeout);
         reject(new Error("La connexion WebSocket Gemini Live a échoué."));
       };
-      this.socket!.onclose = () => {
+      this.socket!.onclose = (event) => {
+        this.log("live.websocket.closed", { code: event.code, reason: event.reason, wasClean: event.wasClean }, this.stopped ? "info" : "error");
         window.clearTimeout(timeout);
         if (!this.stopped) {
           this.callbacks.onStatus("Connexion interrompue");
@@ -76,10 +100,14 @@ export class GeminiLiveAudio {
   }
 
   private async startMicrophone() {
+    this.log("live.microphone.permission.requested");
     this.stream = await navigator.mediaDevices.getUserMedia({
       audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true },
     });
+    this.log("live.microphone.permission.granted", { trackCount: this.stream.getAudioTracks().length, settings: this.stream.getAudioTracks()[0]?.getSettings() || {} });
+    for (const track of this.stream.getAudioTracks()) track.addEventListener("ended", () => this.log("live.microphone.track.ended", { readyState: track.readyState }, this.stopped ? "info" : "warn"));
     this.audioContext = new AudioContext({ sampleRate: 16000 });
+    this.audioContext.addEventListener("statechange", () => this.log("live.audio_context.state_changed", { state: this.audioContext?.state || "unavailable" }, this.audioContext?.state === "suspended" ? "warn" : "debug"));
     await this.audioContext.resume();
     this.source = this.audioContext.createMediaStreamSource(this.stream);
     this.processor = this.audioContext.createScriptProcessor(4096, 1, 1);
@@ -99,12 +127,16 @@ export class GeminiLiveAudio {
         const sample = Math.max(-1, Math.min(1, sum / Math.max(1, end - start)));
         pcm[i] = sample < 0 ? sample * 32768 : sample * 32767;
       }
+      this.audioChunksSent++;
+      if (this.audioChunksSent === 1 || this.audioChunksSent % 100 === 0) this.log("live.audio.input.progress", { chunksSent: this.audioChunksSent, samples: pcm.length, socketState: this.socket.readyState, socketBufferedBytes: this.socket.bufferedAmount }, "debug");
       const bytes = new Uint8Array(pcm.buffer);
       let binary = "";
       for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
-      this.socket.send(JSON.stringify({
-        realtimeInput: { audio: { mimeType: "audio/pcm;rate=16000", data: btoa(binary) } },
-      }));
+      try {
+        this.socket.send(JSON.stringify({ realtimeInput: { audio: { mimeType: "audio/pcm;rate=16000", data: btoa(binary) } } }));
+      } catch (error) {
+        this.log("live.audio.input.send_failed", { ...errorDetails(error), socketState: this.socket?.readyState }, "error");
+      }
     };
     this.source.connect(this.processor);
     this.processor.connect(this.mute);
@@ -113,25 +145,37 @@ export class GeminiLiveAudio {
   }
 
   private handleServerMessage(message: any) {
+    if (message.error) {
+      this.log("live.server.error", { code: message.error.code || null, status: message.error.status || null, detail: message.error.message || "Gemini Live error" }, "error");
+      this.callbacks.onError(String(message.error.message || "Erreur du serveur Gemini Live."));
+      return;
+    }
+    if (message.goAway) { this.log("live.session.go_away", { timeLeft: message.goAway.timeLeft || null }, "warn"); this.callbacks.onStatus("Renouvellement de connexion requis bientôt"); }
     const content = message.serverContent;
-    if (!content) return;
-    if (content.inputTranscription?.text) this.callbacks.onTranscript("user", String(content.inputTranscription.text));
-    if (content.outputTranscription?.text) this.callbacks.onTranscript("chloe", String(content.outputTranscription.text));
-    if (content.interrupted) this.stopPlayback();
+    if (!content) {
+      this.log("live.server.message.unhandled", { keys: Object.keys(message).slice(0, 12) }, "debug");
+      return;
+    }
+    if (content.inputTranscription?.text) { this.lastInputTranscriptAt = performance.now(); this.firstOutputChunkLogged = false; this.log("live.transcription.input", { chars: String(content.inputTranscription.text).length }, "debug"); this.callbacks.onTranscript("user", String(content.inputTranscription.text)); }
+    if (content.outputTranscription?.text) { this.log("live.transcription.output", { chars: String(content.outputTranscription.text).length }, "debug"); this.callbacks.onTranscript("chloe", String(content.outputTranscription.text)); }
+    if (content.interrupted) { this.log("live.output.interrupted", { queuedChunks: this.playing.size }, "warn"); this.stopPlayback(); }
+    if (content.turnComplete) this.log("live.turn.completed", { chunksReceived: this.audioChunksReceived }, "info");
+    if (content.generationComplete) this.log("live.generation.completed", {}, "info");
     const parts = content.modelTurn?.parts || [];
     for (const part of parts) {
       const encoded = part.inlineData?.data;
-      if (encoded && part.inlineData?.mimeType?.startsWith("audio/pcm")) this.playPcm(encoded);
+      if (encoded && part.inlineData?.mimeType?.startsWith("audio/pcm")) { this.audioChunksReceived++; if (!this.firstOutputChunkLogged && this.lastInputTranscriptAt > 0) { this.firstOutputChunkLogged = true; this.log("live.audio.output.first_chunk_latency", { chunksReceived: this.audioChunksReceived }, "info", Math.round(performance.now() - this.lastInputTranscriptAt)); } if (this.audioChunksReceived === 1 || this.audioChunksReceived % 25 === 0) this.log("live.audio.output.progress", { chunksReceived: this.audioChunksReceived, queuedChunks: this.playing.size, queuedAudioMs: this.audioContext ? Math.round(Math.max(0, this.nextPlayTime - this.audioContext.currentTime) * 1000) : 0 }, "debug"); this.playPcm(encoded); }
     }
-    if (message.goAway) this.callbacks.onStatus("Renouvellement de connexion requis bientôt");
   }
 
   private playPcm(encoded: string) {
     if (!this.audioContext) return;
-    const binary = atob(encoded);
+    let binary: string;
+    try { binary = atob(encoded); } catch (error) { this.log("live.audio.output.decode_failed", errorDetails(error), "error"); return; }
     const bytes = new Uint8Array(binary.length);
     for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
     const samples = new Int16Array(bytes.buffer);
+    if (samples.length === 0) { this.log("live.audio.output.empty_chunk", {}, "warn"); return; }
     const buffer = this.audioContext.createBuffer(1, samples.length, 24000);
     const channel = buffer.getChannelData(0);
     for (let i = 0; i < samples.length; i++) channel[i] = samples[i] / 32768;
@@ -140,7 +184,7 @@ export class GeminiLiveAudio {
     node.connect(this.audioContext.destination);
     node.onended = () => this.playing.delete(node);
     const startAt = Math.max(this.audioContext.currentTime + 0.02, this.nextPlayTime);
-    node.start(startAt);
+    try { node.start(startAt); } catch (error) { this.log("live.audio.output.play_failed", errorDetails(error), "error"); return; }
     this.nextPlayTime = startAt + buffer.duration;
     this.playing.add(node);
   }
@@ -154,6 +198,7 @@ export class GeminiLiveAudio {
   }
 
   async stop() {
+    this.log("live.stop.requested", { chunksSent: this.audioChunksSent, chunksReceived: this.audioChunksReceived });
     this.stopped = true;
     this.processor?.disconnect();
     this.source?.disconnect();
@@ -165,6 +210,7 @@ export class GeminiLiveAudio {
     this.socket = null; this.stream = null; this.audioContext = null;
     this.processor = null; this.source = null; this.mute = null;
     this.callbacks.onStatus("Vocal arrêté");
+    this.log("live.stop.completed", { chunksSent: this.audioChunksSent, chunksReceived: this.audioChunksReceived });
   }
 }
 

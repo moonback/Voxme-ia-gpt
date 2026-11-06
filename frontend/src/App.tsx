@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { Activity, ArrowUp, BookOpen, Brain, Check, ChevronDown, CircleHelp, Command, FileText, Headphones, LayoutDashboard, Library, Menu, Mic, Plus, Settings, Shield, Sparkles, Square, Users, WandSparkles, X } from "lucide-react";
 import { isSupabaseConfigured, supabase } from "./lib/supabase";
 import { GeminiLiveAudio } from "./lib/geminiLive";
+import { errorDetails, installBrowserDiagnostics, logConversationEvent, newDiagnosticId } from "./lib/diagnostics";
 import StudioPage from "./components/StudioPage";
 import ProgramsPage from "./components/ProgramsPage";
 import MemoryPage from "./components/MemoryPage";
@@ -56,22 +57,28 @@ function WorkspaceApp() {
 
   useEffect(() => {
     let alive = true;
+    let uninstallDiagnostics: (() => void) | undefined;
+    void supabase?.auth.getUser().then(({ data }) => { if (alive && data.user) uninstallDiagnostics = installBrowserDiagnostics(data.user.id); });
     async function restoreLatestSession() {
       if (!supabase) { setLoadingSession(false); return; }
-      const { data: auth } = await supabase.auth.getUser();
+      const { data: auth, error: authError } = await supabase.auth.getUser();
+      if (authError) logConversationEvent({ level: "error", source: "supabase", event: "session.restore.auth_failed", metadata: errorDetails(authError) });
       if (!auth.user) { setLoadingSession(false); return; }
-      const { data: sessions } = await supabase.from("sessions").select("id,title").eq("user_id", auth.user.id).order("updated_at", { ascending: false }).limit(1);
+      const { data: sessions, error: sessionsError } = await supabase.from("sessions").select("id,title").eq("user_id", auth.user.id).order("updated_at", { ascending: false }).limit(1);
+      if (sessionsError) logConversationEvent({ level: "error", source: "supabase", event: "session.restore.list_failed", userId: auth.user.id, metadata: errorDetails(sessionsError) });
       const latest = sessions?.[0];
       if (!alive || !latest) { setLoadingSession(false); return; }
       setSessionId(latest.id); setSessionTitle(latest.title);
-      const { data: rows } = await supabase.from("messages").select("id,speaker,content,created_at").eq("session_id", latest.id).order("created_at", { ascending: true }).limit(150);
+      const { data: rows, error: messagesError } = await supabase.from("messages").select("id,speaker,content,created_at").eq("session_id", latest.id).order("created_at", { ascending: true }).limit(150);
+      if (messagesError) logConversationEvent({ level: "error", source: "supabase", event: "session.restore.messages_failed", userId: auth.user.id, sessionId: latest.id, metadata: errorDetails(messagesError) });
       if (alive && rows) setMessages(rows.map((row) => ({ id: row.id, agent: row.speaker === "user" ? "Vous" : row.speaker === "chloe" ? "Chloé" : row.speaker === "thomas" ? "Thomas" : "Inès", text: row.content, time: new Date(row.created_at).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" }) })));
-      const { data: savedDecisions } = await supabase.from("artifacts").select("content").eq("session_id", latest.id).eq("kind", "decision").eq("status", "accepted");
+      const { data: savedDecisions, error: decisionsError } = await supabase.from("artifacts").select("content").eq("session_id", latest.id).eq("kind", "decision").eq("status", "accepted");
+      if (decisionsError) logConversationEvent({ level: "error", source: "supabase", event: "session.restore.decisions_failed", userId: auth.user.id, sessionId: latest.id, metadata: errorDetails(decisionsError) });
       if (alive && savedDecisions) setDecisions(savedDecisions.map((item) => typeof item.content?.text === "string" ? item.content.text : "").filter(Boolean));
       if (alive) setLoadingSession(false);
     }
     void restoreLatestSession();
-    return () => { alive = false; };
+    return () => { alive = false; uninstallDiagnostics?.(); };
   }, []);
 
   async function sendMessage() {
@@ -79,38 +86,72 @@ function WorkspaceApp() {
     if (!text || thinking || !supabase) return;
     const now = () => new Date().toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
     const history = messages.map((m) => `${m.agent}: ${m.text}`).join("\n").slice(-7000);
+    const correlationId = newDiagnosticId();
+    const conversationStarted = performance.now();
+    logConversationEvent({ source: "conversation", event: "conversation.turn.started", sessionId, correlationId, metadata: { inputChars: text.length, historyChars: history.length, agentCount: 3 } });
+    let diagnosticUserId: string | undefined;
+    let diagnosticSessionId: string | null = sessionId;
     setDraft(""); setApiError(""); setThinking(true);
     setSessionTitle(text.length > 42 ? text.slice(0, 42) + "…" : text);
     try {
       const { data: auth, error: authError } = await supabase.auth.getUser();
       if (authError || !auth.user) throw new Error("Ta session a expiré. Reconnecte-toi.");
+      diagnosticUserId = auth.user.id;
+      logConversationEvent({ source: "conversation", event: "conversation.authenticated", userId: diagnosticUserId, sessionId: diagnosticSessionId, correlationId });
       let activeSessionId = sessionId;
       if (!activeSessionId) {
         const { data: created, error } = await supabase.from("sessions").insert({ user_id: auth.user.id, title: text.slice(0, 120) }).select("id").single();
-        if (error || !created) throw new Error(error?.message || "Impossible de créer la session.");
-        activeSessionId = created.id; setSessionId(activeSessionId);
+        if (error || !created) { logConversationEvent({ level: "error", source: "supabase", event: "conversation.session.create_failed", userId: auth.user.id, correlationId, metadata: errorDetails(error || new Error("No session row returned")) }); throw new Error(error?.message || "Impossible de créer la session."); }
+        activeSessionId = created.id; diagnosticSessionId = activeSessionId; setSessionId(activeSessionId);
+        logConversationEvent({ source: "supabase", event: "conversation.session.created", userId: auth.user.id, sessionId: activeSessionId, correlationId });
       } else {
         const { error } = await supabase.from("sessions").update({ title: text.slice(0, 120), updated_at: new Date().toISOString() }).eq("id", activeSessionId);
-        if (error) throw new Error(error.message);
+        if (error) { logConversationEvent({ level: "error", source: "supabase", event: "conversation.session.update_failed", userId: auth.user.id, sessionId: activeSessionId, correlationId, metadata: errorDetails(error) }); throw new Error(error.message); }
       }
       const { error: saveUserError } = await supabase.from("messages").insert({ session_id: activeSessionId, speaker: "user", content: text });
-      if (saveUserError) throw new Error(saveUserError.message);
+      if (saveUserError) { logConversationEvent({ level: "error", source: "supabase", event: "conversation.user_message.persist_failed", userId: auth.user.id, sessionId: activeSessionId, correlationId, metadata: errorDetails(saveUserError) }); throw new Error(saveUserError.message); }
+      logConversationEvent({ source: "supabase", event: "conversation.user_message.persisted", userId: auth.user.id, sessionId: activeSessionId, correlationId });
       setMessages((items) => [...items, { id: Date.now(), agent: "Vous", text, time: now() }]);
       let context = history + "\nVous: " + text;
       for (const [agent, speaker] of [["Chloé", "chloe"], ["Thomas", "thomas"], ["Inès", "ines"]] as const) {
-        const accessToken = (await supabase.auth.getSession()).data.session?.access_token;
-        if (!accessToken) throw new Error("Session expirée. Reconnecte-toi.");
-        const response = await fetch("/api/debate/respond", { method: "POST", headers: { "Content-Type": "application/json", "Authorization": `Bearer ${accessToken}` }, body: JSON.stringify({ message: text, agent, context }) });
-        const payload = await response.json();
-        if (!response.ok) throw new Error(payload.error || `Erreur API (${response.status})`);
+        const turnId = newDiagnosticId();
+        const agentStarted = performance.now();
+        logConversationEvent({ source: "conversation", event: "agent.request.started", userId: auth.user.id, sessionId: activeSessionId, correlationId, turnId, metadata: { agent, contextChars: context.length } });
+        const { data: tokenSession, error: tokenError } = await supabase.auth.getSession();
+        const accessToken = tokenSession.session?.access_token;
+        if (tokenError || !accessToken) {
+          logConversationEvent({ level: "error", source: "supabase", event: "agent.auth_token.unavailable", userId: auth.user.id, sessionId: activeSessionId, correlationId, turnId, durationMs: Math.round(performance.now() - agentStarted), metadata: { agent, ...errorDetails(tokenError || new Error("Missing access token")) } });
+          throw new Error("Session expirée. Reconnecte-toi.");
+        }
+        let response: Response;
+        try {
+          response = await fetch("/api/debate/respond", { method: "POST", headers: { "Content-Type": "application/json", "Authorization": `Bearer ${accessToken}`, "x-request-id": turnId }, body: JSON.stringify({ message: text, agent, context }) });
+        } catch (error) {
+          logConversationEvent({ level: "error", source: "conversation", event: "agent.transport.failed", userId: auth.user.id, sessionId: activeSessionId, correlationId, turnId, durationMs: Math.round(performance.now() - agentStarted), metadata: { agent, ...errorDetails(error), online: navigator.onLine } });
+          throw error;
+        }
+        let payload: any;
+        try { payload = await response.json(); }
+        catch (error) {
+          logConversationEvent({ level: "error", source: "conversation", event: "agent.response.invalid_json", userId: auth.user.id, sessionId: activeSessionId, correlationId, turnId, durationMs: Math.round(performance.now() - agentStarted), metadata: { agent, httpStatus: response.status, ...errorDetails(error) } });
+          throw new Error("La réponse du serveur VOXME n'est pas un JSON valide.");
+        }
+        if (!response.ok) { logConversationEvent({ level: "error", source: "conversation", event: "agent.request.failed", userId: auth.user.id, sessionId: activeSessionId, correlationId, turnId, durationMs: Math.round(performance.now() - agentStarted), metadata: { agent, httpStatus: response.status, providerError: payload.error || "unknown" } }); throw new Error(payload.error || `Erreur API (${response.status})`); }
         const answer = String(payload.text || "").trim();
+        if (!answer) logConversationEvent({ level: "warn", source: "conversation", event: "agent.response.empty", userId: auth.user.id, sessionId: activeSessionId, correlationId, turnId, durationMs: Math.round(performance.now() - agentStarted), metadata: { agent, model: payload.model || "unknown" } });
         const { error } = await supabase.from("messages").insert({ session_id: activeSessionId, speaker, content: answer });
-        if (error) throw new Error(`Réponse générée mais non enregistrée : ${error.message}`);
+        if (error) { logConversationEvent({ level: "error", source: "supabase", event: "agent.response.persist_failed", userId: auth.user.id, sessionId: activeSessionId, correlationId, turnId, durationMs: Math.round(performance.now() - agentStarted), metadata: { agent, code: error.code } }); throw new Error(`Réponse générée mais non enregistrée : ${error.message}`); }
+        logConversationEvent({ source: "conversation", event: "agent.request.completed", userId: auth.user.id, sessionId: activeSessionId, correlationId, turnId, durationMs: Math.round(performance.now() - agentStarted), metadata: { agent, responseChars: answer.length, httpStatus: response.status } });
         setMessages((items) => [...items, { id: Date.now() + Math.random(), agent, text: answer, time: now() }]);
         context += `\n${agent}: ${answer}`;
       }
-    } catch (error) { setApiError(error instanceof Error ? error.message : "Impossible de contacter VOXME."); }
-    finally { setThinking(false); }
+    } catch (error) {
+      logConversationEvent({ level: "error", source: "conversation", event: "conversation.turn.failed", userId: diagnosticUserId, sessionId: diagnosticSessionId, correlationId, durationMs: Math.round(performance.now() - conversationStarted), metadata: errorDetails(error) });
+      setApiError(error instanceof Error ? error.message : "Impossible de contacter VOXME.");
+    } finally {
+      logConversationEvent({ source: "conversation", event: "conversation.turn.finished", userId: diagnosticUserId, sessionId: diagnosticSessionId, correlationId, durationMs: Math.round(performance.now() - conversationStarted) });
+      setThinking(false);
+    }
   }
 
   async function toggleLive() {
@@ -121,10 +162,16 @@ function WorkspaceApp() {
       return;
     }
     if (!supabase) return;
+    const { data: liveAuth } = await supabase.auth.getUser();
+    const liveUserId = liveAuth.user?.id;
+    if (!liveUserId) { setApiError("Session expirée. Reconnecte-toi."); return; }
     const client = new GeminiLiveAudio({
-      onStatus: setLiveStatus,
-      onError: (message) => setApiError(message),
+      userId: liveUserId,
+      sessionId,
+      onStatus: (status) => { setLiveStatus(status); logConversationEvent({ source: "gemini-live", event: "live.status", userId: liveUserId, sessionId, metadata: { status } }); },
+      onError: (message) => { logConversationEvent({ level: "error", source: "gemini-live", event: "live.client.error", userId: liveUserId, sessionId, message }); setApiError(message); },
       onTranscript: async (speaker, text) => {
+        logConversationEvent({ source: "gemini-live", event: "live.transcript.received", userId: liveUserId, sessionId, metadata: { speaker, chars: text.length } });
         const clean = text.trim();
         if (!clean) return;
         const agent = speaker === "user" ? "Vous" : "Chloé";
@@ -136,10 +183,11 @@ function WorkspaceApp() {
         if (!activeId) {
           const { data, error } = await supabase.from("sessions").insert({ user_id: auth.user.id, title: "Conversation vocale" }).select("id").single();
           if (error || !data) { setApiError(error?.message || "Impossible de créer la session vocale."); return; }
-          activeId = data.id; setSessionId(activeId); setSessionTitle("Conversation vocale");
+          activeId = data.id; setSessionId(activeId); liveClient.current?.setSessionId(activeId); setSessionTitle("Conversation vocale");
         }
         const { error } = await supabase.from("messages").insert({ session_id: activeId, speaker, content: clean, transcript: clean });
-        if (error) setApiError("Transcription non enregistrée : " + error.message);
+        if (error) { logConversationEvent({ level: "error", source: "supabase", event: "live.transcript.persist_failed", userId: liveUserId, sessionId: activeId, metadata: errorDetails(error) }); setApiError("Transcription non enregistrée : " + error.message); }
+        else logConversationEvent({ source: "supabase", event: "live.transcript.persisted", userId: liveUserId, sessionId: activeId, metadata: { speaker, chars: clean.length } });
       },
     });
     liveClient.current = client;
@@ -148,6 +196,7 @@ function WorkspaceApp() {
       await client.start();
       setListening(true);
     } catch (error) {
+      logConversationEvent({ level: "error", source: "gemini-live", event: "live.start.failed", userId: liveUserId, sessionId, metadata: errorDetails(error) });
       setApiError(error instanceof Error ? error.message : "Impossible de démarrer le mode vocal.");
       await client.stop();
       liveClient.current = null;

@@ -1,6 +1,6 @@
 use axum::{extract::State, http::{HeaderMap, Method, StatusCode}, routing::{get, post}, Json, Router};
 use serde::{Deserialize, Serialize};
-use std::{env, net::SocketAddr, sync::Arc};
+use std::{env, net::SocketAddr, sync::Arc, time::Instant};
 use tower_http::{cors::CorsLayer, trace::TraceLayer};
 
 #[derive(Clone)]
@@ -36,6 +36,9 @@ async fn debate(
     headers: HeaderMap,
     Json(payload): Json<DebateRequest>,
 ) -> Result<Json<DebateResponse>, (StatusCode, Json<ErrorResponse>)> {
+    let started = Instant::now();
+    let request_id = headers.get("x-request-id").and_then(|v| v.to_str().ok()).unwrap_or("missing");
+    tracing::info!(event = "debate.request.started", request_id, agent = %payload.agent, message_bytes = payload.message.len(), context_bytes = payload.context.as_deref().unwrap_or("").len());
     let token = headers.get(axum::http::header::AUTHORIZATION)
         .and_then(|v| v.to_str().ok())
         .and_then(|v| v.strip_prefix("Bearer "))
@@ -46,12 +49,15 @@ async fn debate(
         .ok_or_else(|| (StatusCode::SERVICE_UNAVAILABLE, Json(ErrorResponse { error: "SUPABASE_URL non configurée côté serveur.".into() })))?;
     let anon_key = state.supabase_anon_key.as_ref()
         .ok_or_else(|| (StatusCode::SERVICE_UNAVAILABLE, Json(ErrorResponse { error: "SUPABASE_ANON_KEY non configurée côté serveur.".into() })))?;
+    let auth_started = Instant::now();
     let auth_response = state.http.get(format!("{}/auth/v1/user", supabase_url.trim_end_matches('/')))
         .header("apikey", anon_key)
         .bearer_auth(token)
         .send().await
-        .map_err(|_| (StatusCode::BAD_GATEWAY, Json(ErrorResponse { error: "Vérification de session Supabase impossible.".into() })))?;
+        .map_err(|error| { tracing::error!(event = "debate.auth.transport_error", request_id, error = %error); (StatusCode::BAD_GATEWAY, Json(ErrorResponse { error: "Vérification de session Supabase impossible.".into() })) })?;
+    tracing::info!(event = "debate.auth.response", request_id, status = auth_response.status().as_u16(), elapsed_ms = auth_started.elapsed().as_millis() as u64);
     if !auth_response.status().is_success() {
+        tracing::warn!(event = "debate.auth.rejected", request_id, status = auth_response.status().as_u16());
         return Err((StatusCode::UNAUTHORIZED, Json(ErrorResponse { error: "Session Supabase invalide ou expirée.".into() })));
     }
 
@@ -74,16 +80,20 @@ async fn debate(
         "contents": [{ "parts": [{ "text": prompt }] }],
         "generationConfig": { "temperature": 0.7, "maxOutputTokens": 700 }
     });
+    let provider_started = Instant::now();
     let response = state.http.post(url).header("x-goog-api-key", key).json(&body).send().await
-        .map_err(|_| (StatusCode::BAD_GATEWAY, Json(ErrorResponse { error: "Impossible de joindre le fournisseur IA.".into() })))?;
+        .map_err(|error| { tracing::error!(event = "debate.provider.transport_error", request_id, agent = %role, error = %error); (StatusCode::BAD_GATEWAY, Json(ErrorResponse { error: "Impossible de joindre le fournisseur IA.".into() })) })?;
+    tracing::info!(event = "debate.provider.response", request_id, agent = %role, elapsed_ms = provider_started.elapsed().as_millis() as u64, status = response.status().as_u16());
     let status = response.status();
     let data: serde_json::Value = response.json().await.unwrap_or_default();
     if !status.is_success() {
         let detail = data.pointer("/error/message").and_then(|v| v.as_str()).unwrap_or("Erreur du fournisseur IA");
+        tracing::warn!(event = "debate.provider.rejected", request_id, agent = %role, provider_status = status.as_u16(), provider_error = %detail);
         return Err((StatusCode::BAD_GATEWAY, Json(ErrorResponse { error: detail.to_string() })));
     }
     let text = data.pointer("/candidates/0/content/parts/0/text")
         .and_then(|v| v.as_str()).unwrap_or("Je n'ai pas pu produire de réponse.").to_string();
+    tracing::info!(event = "debate.request.completed", request_id, agent = %role, elapsed_ms = started.elapsed().as_millis() as u64, response_chars = text.chars().count());
     Ok(Json(DebateResponse { agent: role.into(), text, model: state.gemini_model.clone() }))
 }
 
@@ -92,6 +102,9 @@ async fn live_token(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
 ) -> Result<Json<LiveTokenResponse>, (StatusCode, Json<ErrorResponse>)> {
+    let started = Instant::now();
+    let request_id = headers.get("x-request-id").and_then(|v| v.to_str().ok()).unwrap_or("missing");
+    tracing::info!(event = "live.token.request.started", request_id, model = %state.live_model);
     let token = headers.get(axum::http::header::AUTHORIZATION)
         .and_then(|v| v.to_str().ok())
         .and_then(|v| v.strip_prefix("Bearer "))
@@ -101,10 +114,13 @@ async fn live_token(
         .ok_or_else(|| (StatusCode::SERVICE_UNAVAILABLE, Json(ErrorResponse { error: "SUPABASE_URL non configurée.".into() })))?;
     let anon_key = state.supabase_anon_key.as_ref()
         .ok_or_else(|| (StatusCode::SERVICE_UNAVAILABLE, Json(ErrorResponse { error: "SUPABASE_ANON_KEY non configurée.".into() })))?;
+    let auth_started = Instant::now();
     let auth = state.http.get(format!("{}/auth/v1/user", supabase_url.trim_end_matches('/')))
         .header("apikey", anon_key).bearer_auth(token).send().await
-        .map_err(|_| (StatusCode::BAD_GATEWAY, Json(ErrorResponse { error: "Vérification Supabase impossible.".into() })))?;
+        .map_err(|error| { tracing::error!(event = "live.token.auth.transport_error", request_id, error = %error); (StatusCode::BAD_GATEWAY, Json(ErrorResponse { error: "Vérification Supabase impossible.".into() })) })?;
+    tracing::info!(event = "live.token.auth.response", request_id, status = auth.status().as_u16(), elapsed_ms = auth_started.elapsed().as_millis() as u64);
     if !auth.status().is_success() {
+        tracing::warn!(event = "live.token.auth.rejected", request_id, status = auth.status().as_u16());
         return Err((StatusCode::UNAUTHORIZED, Json(ErrorResponse { error: "Session invalide ou expirée.".into() })));
     }
     let api_key = state.gemini_key.as_ref()
@@ -125,18 +141,22 @@ async fn live_token(
             }
         }
     });
+    let provider_started = Instant::now();
     let response = state.http.post("https://generativelanguage.googleapis.com/v1alpha/auth_tokens")
         .header("x-goog-api-key", api_key).json(&body).send().await
-        .map_err(|_| (StatusCode::BAD_GATEWAY, Json(ErrorResponse { error: "Impossible de créer le jeton Live Gemini.".into() })))?;
+        .map_err(|error| { tracing::error!(event = "live.token.provider.transport_error", request_id, error = %error); (StatusCode::BAD_GATEWAY, Json(ErrorResponse { error: "Impossible de créer le jeton Live Gemini.".into() })) })?;
+    tracing::info!(event = "live.token.provider.response", request_id, status = response.status().as_u16(), elapsed_ms = provider_started.elapsed().as_millis() as u64);
     let status = response.status();
     let data: serde_json::Value = response.json().await.unwrap_or_default();
     if !status.is_success() {
         let detail = data.pointer("/error/message").and_then(|v| v.as_str()).unwrap_or("Erreur de création du jeton Live");
+        tracing::warn!(event = "live.token.provider.rejected", request_id, provider_status = status.as_u16(), provider_error = %detail);
         return Err((StatusCode::BAD_GATEWAY, Json(ErrorResponse { error: detail.to_string() })));
     }
     let ephemeral = data.get("name").and_then(|v| v.as_str())
         .or_else(|| data.pointer("/authToken/name").and_then(|v| v.as_str()))
         .ok_or_else(|| (StatusCode::BAD_GATEWAY, Json(ErrorResponse { error: "Gemini n'a pas retourné de jeton éphémère.".into() })))?;
+    tracing::info!(event = "live.token.request.completed", request_id, elapsed_ms = started.elapsed().as_millis() as u64);
     Ok(Json(LiveTokenResponse { token: ephemeral.to_string(), model: state.live_model.clone() }))
 }
 
@@ -144,7 +164,7 @@ async fn live_token(
 async fn main() {
     let _ = dotenvy::from_path("../.env");
     dotenvy::dotenv().ok();
-    tracing_subscriber::fmt().with_env_filter("info").init();
+    tracing_subscriber::fmt().with_env_filter(tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"))).init();
     let port = env::var("API_PORT").ok().and_then(|v| v.parse().ok()).unwrap_or(8080);
     let origin = env::var("FRONTEND_ORIGIN").unwrap_or_else(|_| "http://localhost:5173".into());
     let state = Arc::new(AppState {
