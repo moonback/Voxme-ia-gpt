@@ -16,7 +16,8 @@ Dernière mise à jour : 2026-11-06
 | Notebook | Collections, import et stockage privé PDF/DOCX/TXT/Markdown |
 | Communauté | Publications publiques, réactions et commentaires |
 | Sessions & Lab | Historique, statut, compteurs et transcript |
-| MCP | Registre privé d'endpoints et activation/désactivation de l'entrée |
+| Administration | Console de diagnostic en lecture seule, protégée par le rôle server-managed admin |
+| MCP | Registre privé d'endpoints et activation/désactivation de l'entrée (pas d'exécution) |
 | PWA | Manifest, icône SVG, service worker et cache shell hors ligne |
 
 ## Non implémenté ou incomplet
@@ -24,7 +25,7 @@ Dernière mise à jour : 2026-11-06
 - Orchestration vocale de Thomas et Inès pendant une session Live ; voix distinctes et gestion complète de la prise de parole.
 - Reprise automatique des sessions Live après GoAway et persistance des handles de reprise.
 - Extraction du texte des fichiers, chunking, embeddings, indexation pgvector, RAG et citations documentaires.
-- Administration avec rôles, gestion des utilisateurs, quotas, paramètres globaux et audit.
+- Administration complète : gestion des utilisateurs, quotas, modèles, clés, paramètres globaux et audit (seule la console de diagnostic est présente).
 - Découverte des outils MCP, authentification des serveurs, exécution isolée, autorisations par outil, confirmations utilisateur et journal d'exécution.
 - Groupes communautaires, profils publics, invitations, modération et signalements.
 - Expérimentation Lab des prompts, personas, modèles et stratégies de débat.
