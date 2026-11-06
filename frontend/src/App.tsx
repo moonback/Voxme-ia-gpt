@@ -117,12 +117,28 @@ function WorkspaceApp() {
         const turnId = newDiagnosticId();
         const agentStarted = performance.now();
         logConversationEvent({ source: "conversation", event: "agent.request.started", userId: auth.user.id, sessionId: activeSessionId, correlationId, turnId, metadata: { agent, contextChars: context.length } });
-        const accessToken = (await supabase.auth.getSession()).data.session?.access_token;
-        if (!accessToken) throw new Error("Session expirée. Reconnecte-toi.");
-        const response = await fetch("/api/debate/respond", { method: "POST", headers: { "Content-Type": "application/json", "Authorization": `Bearer ${accessToken}`, "x-request-id": turnId }, body: JSON.stringify({ message: text, agent, context }) });
-        const payload = await response.json();
+        const { data: tokenSession, error: tokenError } = await supabase.auth.getSession();
+        const accessToken = tokenSession.session?.access_token;
+        if (tokenError || !accessToken) {
+          logConversationEvent({ level: "error", source: "supabase", event: "agent.auth_token.unavailable", userId: auth.user.id, sessionId: activeSessionId, correlationId, turnId, durationMs: Math.round(performance.now() - agentStarted), metadata: { agent, ...errorDetails(tokenError || new Error("Missing access token")) } });
+          throw new Error("Session expirée. Reconnecte-toi.");
+        }
+        let response: Response;
+        try {
+          response = await fetch("/api/debate/respond", { method: "POST", headers: { "Content-Type": "application/json", "Authorization": `Bearer ${accessToken}`, "x-request-id": turnId }, body: JSON.stringify({ message: text, agent, context }) });
+        } catch (error) {
+          logConversationEvent({ level: "error", source: "conversation", event: "agent.transport.failed", userId: auth.user.id, sessionId: activeSessionId, correlationId, turnId, durationMs: Math.round(performance.now() - agentStarted), metadata: { agent, ...errorDetails(error), online: navigator.onLine } });
+          throw error;
+        }
+        let payload: any;
+        try { payload = await response.json(); }
+        catch (error) {
+          logConversationEvent({ level: "error", source: "conversation", event: "agent.response.invalid_json", userId: auth.user.id, sessionId: activeSessionId, correlationId, turnId, durationMs: Math.round(performance.now() - agentStarted), metadata: { agent, httpStatus: response.status, ...errorDetails(error) } });
+          throw new Error("La réponse du serveur VOXME n'est pas un JSON valide.");
+        }
         if (!response.ok) { logConversationEvent({ level: "error", source: "conversation", event: "agent.request.failed", userId: auth.user.id, sessionId: activeSessionId, correlationId, turnId, durationMs: Math.round(performance.now() - agentStarted), metadata: { agent, httpStatus: response.status, providerError: payload.error || "unknown" } }); throw new Error(payload.error || `Erreur API (${response.status})`); }
         const answer = String(payload.text || "").trim();
+        if (!answer) logConversationEvent({ level: "warn", source: "conversation", event: "agent.response.empty", userId: auth.user.id, sessionId: activeSessionId, correlationId, turnId, durationMs: Math.round(performance.now() - agentStarted), metadata: { agent, model: payload.model || "unknown" } });
         const { error } = await supabase.from("messages").insert({ session_id: activeSessionId, speaker, content: answer });
         if (error) { logConversationEvent({ level: "error", source: "supabase", event: "agent.response.persist_failed", userId: auth.user.id, sessionId: activeSessionId, correlationId, turnId, durationMs: Math.round(performance.now() - agentStarted), metadata: { agent, code: error.code } }); throw new Error(`Réponse générée mais non enregistrée : ${error.message}`); }
         logConversationEvent({ source: "conversation", event: "agent.request.completed", userId: auth.user.id, sessionId: activeSessionId, correlationId, turnId, durationMs: Math.round(performance.now() - agentStarted), metadata: { agent, responseChars: answer.length, httpStatus: response.status } });
