@@ -1,0 +1,14 @@
+{
+  "name": "VOXME — Table ronde IA",
+  "short_name": "VOXME",
+  "description": "Trois IA débattent, vous décidez.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#090b12",
+  "theme_color": "#090b12",
+  "icons": [
+    { "src": "/voxme-icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}

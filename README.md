@@ -1,0 +1,68 @@
+# VOXME
+
+**ChatGPT te répond. VOXME te challenge.**
+
+VOXME est une plateforme de délibération vocale multi-agents : Chloé construit le raisonnement, Thomas le challenge et Inès relie les arguments pour aider l'utilisateur à décider.
+
+## Stack
+
+- Frontend : React 19, TypeScript, Vite, PWA.
+- Backend : Rust, Axum, Tokio.
+- Données : Supabase (Auth, PostgreSQL, Storage, Realtime, pgvector).
+- IA : Gemini 3.8 Live pour la voix (WebSocket et jetons éphémères), Gemini 3.8 Flash côté serveur pour les traitements texte.
+- Intégrations : MCP (serveurs personnels, permissions et exécution isolée à implémenter).
+
+## Démarrage
+
+### Prérequis
+- Node.js 22+
+- Rust stable
+- Un projet Supabase
+- Une clé Gemini (pour les endpoints IA)
+
+### Configuration
+Copier `.env.example` vers `.env` à la racine pour le backend Rust. Copier `frontend/.env.example` vers `frontend/.env` pour Vite. Renseigner `SUPABASE_URL`, `SUPABASE_ANON_KEY` et `GEMINI_API_KEY` dans le `.env` racine ; le fichier frontend ne contient que l’URL Supabase et la clé anon publique. Ne jamais exposer `GEMINI_API_KEY` ni `SUPABASE_SERVICE_ROLE_KEY` dans le frontend.
+
+### Installer et lancer
+```bash
+npm install
+npm run dev
+```
+
+Le frontend Vite écoute sur http://localhost:5173 et le backend Rust sur http://localhost:8080.
+
+Pour lancer uniquement le backend :
+```bash
+cd backend
+cargo run
+```
+
+## Structure
+
+```
+frontend/                 React + TypeScript + PWA
+backend/                  API Rust/Axum
+supabase/migrations/      Schéma SQL, RLS et index
+```
+
+## Modules produit
+
+1. Conversation /chat/:id — table ronde Chloé, Thomas, Inès.
+2. Studio & Accompagnements — livrables et parcours guidés.
+3. Communauté & Social — partage et collaboration.
+4. Mémoire sélective — souvenirs contrôlés par l'utilisateur.
+5. Tableau de session & Lab — métriques et expérimentation.
+6. Notebook documentaire & RAG — ingestion, recherche et citations.
+7. Administration /admin — gestion et supervision.
+8. Serveurs MCP personnels & outils IA — intégrations gouvernées par permissions.
+
+## État d'avancement
+
+La fondation comprend l'authentification Supabase, la persistance des conversations, les réponses texte des trois rôles et une première connexion audio native Gemini 3.8 Live pour Chloé. Elle ne constitue pas encore une version production complète : l'orchestration vocale des trois agents, le RAG, les modules Studio/Communauté/Admin/MCP et les tests end-to-end restent à développer et valider.
+
+## Sécurité
+
+- Les clés fournisseurs restent côté serveur.
+- Activer et tester les politiques RLS avant d'exposer les données.
+- Les actions MCP sensibles doivent exiger une autorisation explicite.
+- Ne jamais considérer une proposition d'IA comme une décision utilisateur sans validation.
