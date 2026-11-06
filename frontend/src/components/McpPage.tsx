@@ -46,7 +46,7 @@ export default function McpPage() {
   }
 
   async function remove(server: ServerRow) {
-    if (!supabase || !window.confirm(\`Supprimer le serveur « \${server.name} » ?\`)) return;
+    if (!supabase || !window.confirm(`Supprimer le serveur « ${server.name} » ?`)) return;
     const { error } = await supabase.from("mcp_servers").delete().eq("id", server.id);
     if (error) setError(error.message); else setServers((items) => items.filter((item) => item.id !== server.id));
   }
