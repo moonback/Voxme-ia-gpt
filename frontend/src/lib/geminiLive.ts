@@ -1,3 +1,5 @@
+import { supabase } from "./supabase";
+
 export type LiveTranscriptSpeaker = "user" | "chloe";
 
 type LiveCallbacks = {
@@ -165,4 +167,3 @@ export class GeminiLiveAudio {
   }
 }
 
-import { supabase } from "./supabase";
