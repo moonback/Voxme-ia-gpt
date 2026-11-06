@@ -53,7 +53,7 @@ export default function ProgramsPage() {
     if (error) setError(error.message);
     else {
       setSteps((items) => items.map((item) => item.id === step.id ? { ...item, completed_at } : item));
-      const next = selectedSteps.filter((item) => item.id !== step.id || !completed_at).length + (completed_at ? 1 : 0);
+      const next = selectedSteps.filter((item) => item.id !== step.id && Boolean(item.completed_at)).length + (completed_at ? 1 : 0);
       if (selected && next === selectedSteps.length) {
         await supabase.from("guided_programs").update({ status: "completed" }).eq("id", selected.id);
         setPrograms((items) => items.map((item) => item.id === selected.id ? { ...item, status: "completed" } : item));
