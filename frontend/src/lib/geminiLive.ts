@@ -102,8 +102,10 @@ export class GeminiLiveAudio {
     this.stream = await navigator.mediaDevices.getUserMedia({
       audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true },
     });
-    this.log("live.microphone.permission.granted", { trackCount: this.stream.getAudioTracks().length });
+    this.log("live.microphone.permission.granted", { trackCount: this.stream.getAudioTracks().length, settings: this.stream.getAudioTracks()[0]?.getSettings() || {} });
+    for (const track of this.stream.getAudioTracks()) track.addEventListener("ended", () => this.log("live.microphone.track.ended", { readyState: track.readyState }, this.stopped ? "info" : "warn"));
     this.audioContext = new AudioContext({ sampleRate: 16000 });
+    this.audioContext.addEventListener("statechange", () => this.log("live.audio_context.state_changed", { state: this.audioContext?.state || "unavailable" }, this.audioContext?.state === "suspended" ? "warn" : "debug"));
     await this.audioContext.resume();
     this.source = this.audioContext.createMediaStreamSource(this.stream);
     this.processor = this.audioContext.createScriptProcessor(4096, 1, 1);
@@ -128,9 +130,11 @@ export class GeminiLiveAudio {
       const bytes = new Uint8Array(pcm.buffer);
       let binary = "";
       for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
-      this.socket.send(JSON.stringify({
-        realtimeInput: { audio: { mimeType: "audio/pcm;rate=16000", data: btoa(binary) } },
-      }));
+      try {
+        this.socket.send(JSON.stringify({ realtimeInput: { audio: { mimeType: "audio/pcm;rate=16000", data: btoa(binary) } } }));
+      } catch (error) {
+        this.log("live.audio.input.send_failed", { ...errorDetails(error), socketState: this.socket?.readyState }, "error");
+      }
     };
     this.source.connect(this.processor);
     this.processor.connect(this.mute);
@@ -164,7 +168,8 @@ export class GeminiLiveAudio {
 
   private playPcm(encoded: string) {
     if (!this.audioContext) return;
-    const binary = atob(encoded);
+    let binary: string;
+    try { binary = atob(encoded); } catch (error) { this.log("live.audio.output.decode_failed", errorDetails(error), "error"); return; }
     const bytes = new Uint8Array(binary.length);
     for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
     const samples = new Int16Array(bytes.buffer);
@@ -177,7 +182,7 @@ export class GeminiLiveAudio {
     node.connect(this.audioContext.destination);
     node.onended = () => this.playing.delete(node);
     const startAt = Math.max(this.audioContext.currentTime + 0.02, this.nextPlayTime);
-    node.start(startAt);
+    try { node.start(startAt); } catch (error) { this.log("live.audio.output.play_failed", errorDetails(error), "error"); return; }
     this.nextPlayTime = startAt + buffer.duration;
     this.playing.add(node);
   }
