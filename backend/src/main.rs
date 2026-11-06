@@ -86,7 +86,6 @@ async fn debate(
     if !status.is_success() {
         let detail = data.pointer("/error/message").and_then(|v| v.as_str()).unwrap_or("Erreur du fournisseur IA");
         tracing::warn!(event = "debate.provider.rejected", request_id, agent = %role, provider_status = status.as_u16(), provider_error = %detail);
-        tracing::warn!(event = "live.token.provider.rejected", request_id, provider_status = status.as_u16(), provider_error = %detail);
         return Err((StatusCode::BAD_GATEWAY, Json(ErrorResponse { error: detail.to_string() })));
     }
     let text = data.pointer("/candidates/0/content/parts/0/text")
@@ -145,6 +144,7 @@ async fn live_token(
     let data: serde_json::Value = response.json().await.unwrap_or_default();
     if !status.is_success() {
         let detail = data.pointer("/error/message").and_then(|v| v.as_str()).unwrap_or("Erreur de création du jeton Live");
+        tracing::warn!(event = "live.token.provider.rejected", request_id, provider_status = status.as_u16(), provider_error = %detail);
         return Err((StatusCode::BAD_GATEWAY, Json(ErrorResponse { error: detail.to_string() })));
     }
     let ephemeral = data.get("name").and_then(|v| v.as_str())
@@ -158,7 +158,7 @@ async fn live_token(
 async fn main() {
     let _ = dotenvy::from_path("../.env");
     dotenvy::dotenv().ok();
-    tracing_subscriber::fmt().with_env_filter("info").init();
+    tracing_subscriber::fmt().with_env_filter(tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"))).init();
     let port = env::var("API_PORT").ok().and_then(|v| v.parse().ok()).unwrap_or(8080);
     let origin = env::var("FRONTEND_ORIGIN").unwrap_or_else(|_| "http://localhost:5173".into());
     let state = Arc::new(AppState {
