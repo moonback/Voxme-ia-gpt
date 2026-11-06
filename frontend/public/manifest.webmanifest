@@ -1,0 +1,10 @@
+{
+  "name": "VOXME — Table ronde IA",
+  "short_name": "VOXME",
+  "description": "Trois IA débattent, vous décidez.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#090b12",
+  "theme_color": "#090b12",
+  "icons": []
+}
