@@ -22,6 +22,7 @@ export class GeminiLiveAudio {
   constructor(private callbacks: LiveCallbacks) {}
 
   async start() {
+    if (!supabase) throw new Error("Supabase n’est pas configuré.");
     this.stopped = false;
     this.callbacks.onStatus("Connexion à Gemini Live…");
     const { data: auth, error: authError } = await supabase.auth.getSession();
