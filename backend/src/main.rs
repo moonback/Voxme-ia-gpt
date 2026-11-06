@@ -150,7 +150,7 @@ async fn main() {
     let state = Arc::new(AppState {
         http: reqwest::Client::builder().timeout(std::time::Duration::from_secs(45)).build().expect("HTTP client"),
         gemini_key: env::var("GEMINI_API_KEY").ok().filter(|v| !v.is_empty()),
-        gemini_model: env::var("GEMINI_TEXT_MODEL").unwrap_or_else(|_| "gemini-2.5-flash".into()),
+        gemini_model: env::var("GEMINI_TEXT_MODEL").unwrap_or_else(|_| "gemini-3.8-flash".into()),
         supabase_url: env::var("SUPABASE_URL").ok().filter(|v| !v.is_empty()),
         supabase_anon_key: env::var("SUPABASE_ANON_KEY").ok().filter(|v| !v.is_empty()),
         live_model: env::var("GEMINI_LIVE_MODEL").unwrap_or_else(|_| "gemini-3.8-live".into()),
