@@ -99,7 +99,8 @@ function WorkspaceApp() {
       let context = history + "\nVous: " + text;
       for (const [agent, speaker] of [["Chloé", "chloe"], ["Thomas", "thomas"], ["Inès", "ines"]] as const) {
         const accessToken = (await supabase.auth.getSession()).data.session?.access_token;
-        if (!accessToken) throw new Error("Session expirée. Reconnecte-toi.");\n        const response = await fetch("/api/debate/respond", { method: "POST", headers: { "Content-Type": "application/json", "Authorization": `Bearer ${accessToken}` }, body: JSON.stringify({ message: text, agent, context }) });
+        if (!accessToken) throw new Error("Session expirée. Reconnecte-toi.");
+        const response = await fetch("/api/debate/respond", { method: "POST", headers: { "Content-Type": "application/json", "Authorization": `Bearer ${accessToken}` }, body: JSON.stringify({ message: text, agent, context }) });
         const payload = await response.json();
         if (!response.ok) throw new Error(payload.error || `Erreur API (${response.status})`);
         const answer = String(payload.text || "").trim();
