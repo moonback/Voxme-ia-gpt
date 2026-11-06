@@ -126,7 +126,7 @@ function WorkspaceApp() {
         context += `\n${agent}: ${answer}`;
       }
     } catch (error) {
-      logConversationEvent({ level: "error", source: "conversation", event: "conversation.turn.failed", userId: diagnosticUserId, sessionId: diagnosticSessionId, correlationId, durationMs: Math.round(performance.now() - conversationStarted), ...errorDetails(error) });
+      logConversationEvent({ level: "error", source: "conversation", event: "conversation.turn.failed", userId: diagnosticUserId, sessionId: diagnosticSessionId, correlationId, durationMs: Math.round(performance.now() - conversationStarted), metadata: errorDetails(error) });
       setApiError(error instanceof Error ? error.message : "Impossible de contacter VOXME.");
     } finally {
       logConversationEvent({ source: "conversation", event: "conversation.turn.finished", userId: diagnosticUserId, sessionId: diagnosticSessionId, correlationId, durationMs: Math.round(performance.now() - conversationStarted) });
@@ -176,7 +176,7 @@ function WorkspaceApp() {
       await client.start();
       setListening(true);
     } catch (error) {
-      logConversationEvent({ level: "error", source: "gemini-live", event: "live.start.failed", userId: liveUserId, sessionId, ...errorDetails(error) });
+      logConversationEvent({ level: "error", source: "gemini-live", event: "live.start.failed", userId: liveUserId, sessionId, metadata: errorDetails(error) });
       setApiError(error instanceof Error ? error.message : "Impossible de démarrer le mode vocal.");
       await client.stop();
       liveClient.current = null;
