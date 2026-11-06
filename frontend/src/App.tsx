@@ -159,7 +159,7 @@ function WorkspaceApp() {
         if (!activeId) {
           const { data, error } = await supabase.from("sessions").insert({ user_id: auth.user.id, title: "Conversation vocale" }).select("id").single();
           if (error || !data) { setApiError(error?.message || "Impossible de créer la session vocale."); return; }
-          activeId = data.id; setSessionId(activeId); setSessionTitle("Conversation vocale");
+          activeId = data.id; setSessionId(activeId); liveClient.current?.setSessionId(activeId); setSessionTitle("Conversation vocale");
         }
         const { error } = await supabase.from("messages").insert({ session_id: activeId, speaker, content: clean, transcript: clean });
         if (error) { logConversationEvent({ level: "error", source: "supabase", event: "live.transcript.persist_failed", userId: liveUserId, sessionId: activeId, ...errorDetails(error) }); setApiError("Transcription non enregistrée : " + error.message); }
