@@ -29,7 +29,7 @@ export class GeminiLiveAudio {
     if (authError || !auth.session) throw new Error("Connecte-toi à VOXME avant de démarrer le vocal.");
     const tokenResponse = await fetch("/api/live/token", {
       method: "POST",
-      headers: { Authorization: \`Bearer \${auth.session.access_token}\` },
+      headers: { Authorization: `Bearer ${auth.session.access_token}` },
     });
     const tokenData = await tokenResponse.json();
     if (!tokenResponse.ok) throw new Error(tokenData.error || "Impossible d'obtenir un jeton vocal.");
@@ -38,7 +38,7 @@ export class GeminiLiveAudio {
     if (!ephemeralToken) throw new Error("Le serveur n'a pas fourni de jeton Live.");
 
     this.socket = new WebSocket(
-      \`wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContentConstrained?access_token=\${encodeURIComponent(ephemeralToken)}\`,
+      `wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContentConstrained?access_token=${encodeURIComponent(ephemeralToken)}`,
     );
     await new Promise<void>((resolve, reject) => {
       const timeout = window.setTimeout(() => reject(new Error("Délai dépassé pendant la connexion Gemini Live.")), 15000);
@@ -46,7 +46,7 @@ export class GeminiLiveAudio {
         this.callbacks.onStatus("Initialisation de la session vocale…");
         this.socket!.send(JSON.stringify({
           setup: {
-            model: \`models/\${model}\`,
+            model: `models/${model}`,
             generationConfig: { responseModalities: ["AUDIO"] },
           },
         }));
