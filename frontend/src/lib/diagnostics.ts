@@ -66,15 +66,21 @@ export function installBrowserDiagnostics(userId: string) {
     message: event.message || "Unhandled browser error",
     metadata: { filename: event.filename, line: event.lineno, column: event.colno },
   });
+  const onOnline = () => logConversationEvent({ source: "browser", event: "browser.network.online", userId });
+  const onOffline = () => logConversationEvent({ level: "warn", source: "browser", event: "browser.network.offline", userId });
   const onRejection = (event: PromiseRejectionEvent) => logConversationEvent({
     level: "error", source: "browser", event: "browser.unhandled_rejection", userId,
     metadata: errorDetails(event.reason),
   });
   window.addEventListener("error", onError);
   window.addEventListener("unhandledrejection", onRejection);
+  window.addEventListener("online", onOnline);
+  window.addEventListener("offline", onOffline);
   logConversationEvent({ source: "browser", event: "browser.diagnostics_installed", userId, metadata: { online: navigator.onLine, userAgent: navigator.userAgent, language: navigator.language } });
   return () => {
     window.removeEventListener("error", onError);
     window.removeEventListener("unhandledrejection", onRejection);
+    window.removeEventListener("online", onOnline);
+    window.removeEventListener("offline", onOffline);
   };
 }
