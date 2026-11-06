@@ -101,7 +101,7 @@ function WorkspaceApp() {
         if (error) throw new Error(error.message);
       }
       const { error: saveUserError } = await supabase.from("messages").insert({ session_id: activeSessionId, speaker: "user", content: text });
-      if (saveUserError) { logConversationEvent({ level: "error", source: "supabase", event: "conversation.user_message.persist_failed", userId: auth.user.id, sessionId: activeSessionId, correlationId, ...errorDetails(saveUserError) }); throw new Error(saveUserError.message); }
+      if (saveUserError) { logConversationEvent({ level: "error", source: "supabase", event: "conversation.user_message.persist_failed", userId: auth.user.id, sessionId: activeSessionId, correlationId, metadata: errorDetails(saveUserError) }); throw new Error(saveUserError.message); }
       logConversationEvent({ source: "supabase", event: "conversation.user_message.persisted", userId: auth.user.id, sessionId: activeSessionId, correlationId });
       setMessages((items) => [...items, { id: Date.now(), agent: "Vous", text, time: now() }]);
       let context = history + "\nVous: " + text;
@@ -162,7 +162,7 @@ function WorkspaceApp() {
           activeId = data.id; setSessionId(activeId); liveClient.current?.setSessionId(activeId); setSessionTitle("Conversation vocale");
         }
         const { error } = await supabase.from("messages").insert({ session_id: activeId, speaker, content: clean, transcript: clean });
-        if (error) { logConversationEvent({ level: "error", source: "supabase", event: "live.transcript.persist_failed", userId: liveUserId, sessionId: activeId, ...errorDetails(error) }); setApiError("Transcription non enregistrée : " + error.message); }
+        if (error) { logConversationEvent({ level: "error", source: "supabase", event: "live.transcript.persist_failed", userId: liveUserId, sessionId: activeId, metadata: errorDetails(error) }); setApiError("Transcription non enregistrée : " + error.message); }
         else logConversationEvent({ source: "supabase", event: "live.transcript.persisted", userId: liveUserId, sessionId: activeId, metadata: { speaker, chars: clean.length } });
       },
     });
