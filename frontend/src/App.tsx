@@ -62,6 +62,8 @@ function WorkspaceApp() {
       setSessionId(latest.id); setSessionTitle(latest.title);
       const { data: rows } = await supabase.from("messages").select("id,speaker,content,created_at").eq("session_id", latest.id).order("created_at", { ascending: true }).limit(150);
       if (alive && rows) setMessages(rows.map((row) => ({ id: row.id, agent: row.speaker === "user" ? "Vous" : row.speaker === "chloe" ? "Chloé" : row.speaker === "thomas" ? "Thomas" : "Inès", text: row.content, time: new Date(row.created_at).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" }) })));
+      const { data: savedDecisions } = await supabase.from("artifacts").select("content").eq("session_id", latest.id).eq("kind", "decision").eq("status", "accepted");
+      if (alive && savedDecisions) setDecisions(savedDecisions.map((item) => typeof item.content?.text === "string" ? item.content.text : "").filter(Boolean));
       if (alive) setLoadingSession(false);
     }
     void restoreLatestSession();
