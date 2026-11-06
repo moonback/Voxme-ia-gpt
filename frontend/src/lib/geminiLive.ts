@@ -59,7 +59,7 @@ export class GeminiLiveAudio {
       `wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContentConstrained?access_token=${encodeURIComponent(ephemeralToken)}`,
     );
     await new Promise<void>((resolve, reject) => {
-      const timeout = window.setTimeout(() => reject(new Error("Délai dépassé pendant la connexion Gemini Live.")), 15000);
+      const timeout = window.setTimeout(() => { this.log("live.websocket.setup_timeout", { timeoutMs: 15000 }, "error", Math.round(performance.now() - startedAt)); reject(new Error("Délai dépassé pendant la connexion Gemini Live.")); }, 15000);
       this.socket!.onopen = () => {
         this.log("live.websocket.open");
         this.callbacks.onStatus("Initialisation de la session vocale…");
