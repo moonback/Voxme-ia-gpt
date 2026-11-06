@@ -25,6 +25,8 @@ export class GeminiLiveAudio {
   private currentSessionId: string | null;
   private audioChunksReceived = 0;
   private audioChunksSent = 0;
+  private lastInputTranscriptAt = 0;
+  private firstOutputChunkLogged = false;
 
   private log(event: string, metadata: Record<string, unknown> = {}, level: "debug" | "info" | "warn" | "error" = "info", durationMs?: number) {
     logConversationEvent({ source: "gemini-live", event, level, userId: this.callbacks.userId, sessionId: this.currentSessionId || this.callbacks.sessionId, correlationId: this.correlationId, metadata, durationMs });
@@ -126,7 +128,7 @@ export class GeminiLiveAudio {
         pcm[i] = sample < 0 ? sample * 32768 : sample * 32767;
       }
       this.audioChunksSent++;
-      if (this.audioChunksSent === 1 || this.audioChunksSent % 100 === 0) this.log("live.audio.input.progress", { chunksSent: this.audioChunksSent, samples: pcm.length, socketState: this.socket.readyState }, "debug");
+      if (this.audioChunksSent === 1 || this.audioChunksSent % 100 === 0) this.log("live.audio.input.progress", { chunksSent: this.audioChunksSent, samples: pcm.length, socketState: this.socket.readyState, socketBufferedBytes: this.socket.bufferedAmount }, "debug");
       const bytes = new Uint8Array(pcm.buffer);
       let binary = "";
       for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
@@ -154,7 +156,7 @@ export class GeminiLiveAudio {
       this.log("live.server.message.unhandled", { keys: Object.keys(message).slice(0, 12) }, "debug");
       return;
     }
-    if (content.inputTranscription?.text) { this.log("live.transcription.input", { chars: String(content.inputTranscription.text).length }, "debug"); this.callbacks.onTranscript("user", String(content.inputTranscription.text)); }
+    if (content.inputTranscription?.text) { this.lastInputTranscriptAt = performance.now(); this.firstOutputChunkLogged = false; this.log("live.transcription.input", { chars: String(content.inputTranscription.text).length }, "debug"); this.callbacks.onTranscript("user", String(content.inputTranscription.text)); }
     if (content.outputTranscription?.text) { this.log("live.transcription.output", { chars: String(content.outputTranscription.text).length }, "debug"); this.callbacks.onTranscript("chloe", String(content.outputTranscription.text)); }
     if (content.interrupted) { this.log("live.output.interrupted", { queuedChunks: this.playing.size }, "warn"); this.stopPlayback(); }
     if (content.turnComplete) this.log("live.turn.completed", { chunksReceived: this.audioChunksReceived }, "info");
@@ -162,7 +164,7 @@ export class GeminiLiveAudio {
     const parts = content.modelTurn?.parts || [];
     for (const part of parts) {
       const encoded = part.inlineData?.data;
-      if (encoded && part.inlineData?.mimeType?.startsWith("audio/pcm")) { this.audioChunksReceived++; if (this.audioChunksReceived === 1 || this.audioChunksReceived % 25 === 0) this.log("live.audio.output.progress", { chunksReceived: this.audioChunksReceived, queuedChunks: this.playing.size }, "debug"); this.playPcm(encoded); }
+      if (encoded && part.inlineData?.mimeType?.startsWith("audio/pcm")) { this.audioChunksReceived++; if (!this.firstOutputChunkLogged && this.lastInputTranscriptAt > 0) { this.firstOutputChunkLogged = true; this.log("live.audio.output.first_chunk_latency", { chunksReceived: this.audioChunksReceived }, "info", Math.round(performance.now() - this.lastInputTranscriptAt)); } if (this.audioChunksReceived === 1 || this.audioChunksReceived % 25 === 0) this.log("live.audio.output.progress", { chunksReceived: this.audioChunksReceived, queuedChunks: this.playing.size, queuedAudioMs: this.audioContext ? Math.round(Math.max(0, this.nextPlayTime - this.audioContext.currentTime) * 1000) : 0 }, "debug"); this.playPcm(encoded); }
     }
   }
 
