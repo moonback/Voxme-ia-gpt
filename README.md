@@ -26,7 +26,6 @@ Copier `.env.example` vers `.env` à la racine pour le backend Rust, puis vers `
 ### Installer et lancer
 ```bash
 npm install
-npm run install:frontend
 npm run dev
 ```
 
@@ -59,7 +58,7 @@ supabase/migrations/      Schéma SQL, RLS et index
 
 ## État d'avancement
 
-Cette première base initialise le monorepo, l'interface responsive, l'API Rust et le premier schéma Supabase. Elle ne constitue pas encore une version production complète : l'orchestration vocale Gemini Live, les trois agents, le RAG, les workflows MCP, les espaces sociaux et les tests end-to-end doivent être développés et validés dans les phases suivantes.
+La fondation comprend l'authentification Supabase, la persistance des conversations, les réponses texte des trois rôles et une première connexion audio native Gemini 3.8 Live pour Chloé. Elle ne constitue pas encore une version production complète : l'orchestration vocale des trois agents, le RAG, les modules Studio/Communauté/Admin/MCP et les tests end-to-end restent à développer et valider.
 
 ## Sécurité
 
