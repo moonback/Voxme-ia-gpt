@@ -58,7 +58,7 @@ supabase/migrations/      Schéma SQL, RLS et index
 
 ## État d'avancement
 
-La fondation comprend l'authentification Supabase, la persistance des conversations, les réponses texte des trois rôles et une première connexion audio native Gemini 3.8 Live pour Chloé. Elle ne constitue pas encore une version production complète : l'orchestration vocale des trois agents, le RAG, les modules Studio/Communauté/Admin/MCP et les tests end-to-end restent à développer et valider.
+La fondation comprend l'authentification Supabase, les conversations texte des trois rôles, une première connexion audio Gemini Live pour Chloé, Studio, Accompagnements, Mémoire, Notebook (stockage), Communauté, historique des sessions, registre MCP, console de diagnostic admin et instrumentation des conversations. Les logs structurés couvrent les tours, agents, durées, erreurs navigateur, appels Gemini, WebSocket, microphone et persistance Supabase. Appliquer `supabase/migrations/0006_conversation_diagnostics.sql` pour afficher la timeline des diagnostics dans Sessions & Lab. Les logs backend Rust sont disponibles dans stdout/stderr et corrélés par `x-request-id`. Le RAG, l'orchestration vocale multi-agents, l'exécution MCP et les tests end-to-end restent à terminer.
 
 ## Sécurité
 
