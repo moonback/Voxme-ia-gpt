@@ -35,8 +35,8 @@ export function newDiagnosticId() {
 }
 
 export function errorDetails(error: unknown) {
-  if (error instanceof Error) return { errorName: error.name, errorMessage: error.message.slice(0, 500) };
-  return { errorName: "UnknownError", errorMessage: String(error).slice(0, 500) };
+  if (error instanceof Error) return { errorName: error.name, detail: error.message.slice(0, 500) };
+  return { errorName: "UnknownError", detail: String(error).slice(0, 500) };
 }
 
 export function logConversationEvent(input: DiagnosticInput) {
@@ -68,7 +68,7 @@ export function installBrowserDiagnostics(userId: string) {
   });
   const onRejection = (event: PromiseRejectionEvent) => logConversationEvent({
     level: "error", source: "browser", event: "browser.unhandled_rejection", userId,
-    ...errorDetails(event.reason),
+    metadata: errorDetails(event.reason),
   });
   window.addEventListener("error", onError);
   window.addEventListener("unhandledrejection", onRejection);
