@@ -9,7 +9,7 @@ VOXME est une plateforme de délibération vocale multi-agents : Chloé construi
 - Frontend : React 19, TypeScript, Vite, PWA.
 - Backend : Rust, Axum, Tokio.
 - Données : Supabase (Auth, PostgreSQL, Storage, Realtime, pgvector).
-- IA : Gemini Live pour la voix (intégration temps réel à finaliser), Gemini API côté serveur pour les traitements texte.
+- IA : Gemini 3.8 Live pour la voix (WebSocket et jetons éphémères), Gemini 3.8 Flash côté serveur pour les traitements texte.
 - Intégrations : MCP (serveurs personnels, permissions et exécution isolée à implémenter).
 
 ## Démarrage
