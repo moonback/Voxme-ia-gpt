@@ -49,12 +49,15 @@ async fn debate(
         .ok_or_else(|| (StatusCode::SERVICE_UNAVAILABLE, Json(ErrorResponse { error: "SUPABASE_URL non configurée côté serveur.".into() })))?;
     let anon_key = state.supabase_anon_key.as_ref()
         .ok_or_else(|| (StatusCode::SERVICE_UNAVAILABLE, Json(ErrorResponse { error: "SUPABASE_ANON_KEY non configurée côté serveur.".into() })))?;
+    let auth_started = Instant::now();
     let auth_response = state.http.get(format!("{}/auth/v1/user", supabase_url.trim_end_matches('/')))
         .header("apikey", anon_key)
         .bearer_auth(token)
         .send().await
-        .map_err(|_| (StatusCode::BAD_GATEWAY, Json(ErrorResponse { error: "Vérification de session Supabase impossible.".into() })))?;
+        .map_err(|error| { tracing::error!(event = "debate.auth.transport_error", request_id, error = %error); (StatusCode::BAD_GATEWAY, Json(ErrorResponse { error: "Vérification de session Supabase impossible.".into() })) })?;
+    tracing::info!(event = "debate.auth.response", request_id, status = auth_response.status().as_u16(), elapsed_ms = auth_started.elapsed().as_millis() as u64);
     if !auth_response.status().is_success() {
+        tracing::warn!(event = "debate.auth.rejected", request_id, status = auth_response.status().as_u16());
         return Err((StatusCode::UNAUTHORIZED, Json(ErrorResponse { error: "Session Supabase invalide ou expirée.".into() })));
     }
 
@@ -111,10 +114,13 @@ async fn live_token(
         .ok_or_else(|| (StatusCode::SERVICE_UNAVAILABLE, Json(ErrorResponse { error: "SUPABASE_URL non configurée.".into() })))?;
     let anon_key = state.supabase_anon_key.as_ref()
         .ok_or_else(|| (StatusCode::SERVICE_UNAVAILABLE, Json(ErrorResponse { error: "SUPABASE_ANON_KEY non configurée.".into() })))?;
+    let auth_started = Instant::now();
     let auth = state.http.get(format!("{}/auth/v1/user", supabase_url.trim_end_matches('/')))
         .header("apikey", anon_key).bearer_auth(token).send().await
-        .map_err(|_| (StatusCode::BAD_GATEWAY, Json(ErrorResponse { error: "Vérification Supabase impossible.".into() })))?;
+        .map_err(|error| { tracing::error!(event = "live.token.auth.transport_error", request_id, error = %error); (StatusCode::BAD_GATEWAY, Json(ErrorResponse { error: "Vérification Supabase impossible.".into() })) })?;
+    tracing::info!(event = "live.token.auth.response", request_id, status = auth.status().as_u16(), elapsed_ms = auth_started.elapsed().as_millis() as u64);
     if !auth.status().is_success() {
+        tracing::warn!(event = "live.token.auth.rejected", request_id, status = auth.status().as_u16());
         return Err((StatusCode::UNAUTHORIZED, Json(ErrorResponse { error: "Session invalide ou expirée.".into() })));
     }
     let api_key = state.gemini_key.as_ref()
