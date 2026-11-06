@@ -61,15 +61,19 @@ function WorkspaceApp() {
     void supabase?.auth.getUser().then(({ data }) => { if (alive && data.user) uninstallDiagnostics = installBrowserDiagnostics(data.user.id); });
     async function restoreLatestSession() {
       if (!supabase) { setLoadingSession(false); return; }
-      const { data: auth } = await supabase.auth.getUser();
+      const { data: auth, error: authError } = await supabase.auth.getUser();
+      if (authError) logConversationEvent({ level: "error", source: "supabase", event: "session.restore.auth_failed", metadata: errorDetails(authError) });
       if (!auth.user) { setLoadingSession(false); return; }
-      const { data: sessions } = await supabase.from("sessions").select("id,title").eq("user_id", auth.user.id).order("updated_at", { ascending: false }).limit(1);
+      const { data: sessions, error: sessionsError } = await supabase.from("sessions").select("id,title").eq("user_id", auth.user.id).order("updated_at", { ascending: false }).limit(1);
+      if (sessionsError) logConversationEvent({ level: "error", source: "supabase", event: "session.restore.list_failed", userId: auth.user.id, metadata: errorDetails(sessionsError) });
       const latest = sessions?.[0];
       if (!alive || !latest) { setLoadingSession(false); return; }
       setSessionId(latest.id); setSessionTitle(latest.title);
-      const { data: rows } = await supabase.from("messages").select("id,speaker,content,created_at").eq("session_id", latest.id).order("created_at", { ascending: true }).limit(150);
+      const { data: rows, error: messagesError } = await supabase.from("messages").select("id,speaker,content,created_at").eq("session_id", latest.id).order("created_at", { ascending: true }).limit(150);
+      if (messagesError) logConversationEvent({ level: "error", source: "supabase", event: "session.restore.messages_failed", userId: auth.user.id, sessionId: latest.id, metadata: errorDetails(messagesError) });
       if (alive && rows) setMessages(rows.map((row) => ({ id: row.id, agent: row.speaker === "user" ? "Vous" : row.speaker === "chloe" ? "Chloé" : row.speaker === "thomas" ? "Thomas" : "Inès", text: row.content, time: new Date(row.created_at).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" }) })));
-      const { data: savedDecisions } = await supabase.from("artifacts").select("content").eq("session_id", latest.id).eq("kind", "decision").eq("status", "accepted");
+      const { data: savedDecisions, error: decisionsError } = await supabase.from("artifacts").select("content").eq("session_id", latest.id).eq("kind", "decision").eq("status", "accepted");
+      if (decisionsError) logConversationEvent({ level: "error", source: "supabase", event: "session.restore.decisions_failed", userId: auth.user.id, sessionId: latest.id, metadata: errorDetails(decisionsError) });
       if (alive && savedDecisions) setDecisions(savedDecisions.map((item) => typeof item.content?.text === "string" ? item.content.text : "").filter(Boolean));
       if (alive) setLoadingSession(false);
     }
@@ -97,12 +101,12 @@ function WorkspaceApp() {
       let activeSessionId = sessionId;
       if (!activeSessionId) {
         const { data: created, error } = await supabase.from("sessions").insert({ user_id: auth.user.id, title: text.slice(0, 120) }).select("id").single();
-        if (error || !created) throw new Error(error?.message || "Impossible de créer la session.");
+        if (error || !created) { logConversationEvent({ level: "error", source: "supabase", event: "conversation.session.create_failed", userId: auth.user.id, correlationId, metadata: errorDetails(error || new Error("No session row returned")) }); throw new Error(error?.message || "Impossible de créer la session."); }
         activeSessionId = created.id; diagnosticSessionId = activeSessionId; setSessionId(activeSessionId);
         logConversationEvent({ source: "supabase", event: "conversation.session.created", userId: auth.user.id, sessionId: activeSessionId, correlationId });
       } else {
         const { error } = await supabase.from("sessions").update({ title: text.slice(0, 120), updated_at: new Date().toISOString() }).eq("id", activeSessionId);
-        if (error) throw new Error(error.message);
+        if (error) { logConversationEvent({ level: "error", source: "supabase", event: "conversation.session.update_failed", userId: auth.user.id, sessionId: activeSessionId, correlationId, metadata: errorDetails(error) }); throw new Error(error.message); }
       }
       const { error: saveUserError } = await supabase.from("messages").insert({ session_id: activeSessionId, speaker: "user", content: text });
       if (saveUserError) { logConversationEvent({ level: "error", source: "supabase", event: "conversation.user_message.persist_failed", userId: auth.user.id, sessionId: activeSessionId, correlationId, metadata: errorDetails(saveUserError) }); throw new Error(saveUserError.message); }
