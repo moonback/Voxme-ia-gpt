@@ -1,13 +1,17 @@
 import { useEffect, useMemo, useState } from "react";
-import { Activity, Archive, CheckCircle2, Clock3, MessageSquare, Pause, Play, Users } from "lucide-react";
+import { Activity, Archive, AlertTriangle, Clock3, MessageSquare, RefreshCw, Users } from "lucide-react";
 import { supabase } from "../lib/supabase";
 
 type SessionRow = { id: string; title: string; status: "active" | "paused" | "completed" | "archived"; created_at: string; updated_at: string; mode: string };
 type MessageRow = { id: string; speaker: string; content: string; created_at: string };
+type DiagnosticRow = { id: string; created_at: string; level: string; source: string; event: string; message: string; duration_ms: number | null; metadata: Record<string, unknown>; correlation_id: string | null; turn_id: string | null };
 
 export default function SessionsPage() {
   const [sessions, setSessions] = useState<SessionRow[]>([]);
   const [messages, setMessages] = useState<MessageRow[]>([]);
+  const [diagnostics, setDiagnostics] = useState<DiagnosticRow[]>([]);
+  const [logFilter, setLogFilter] = useState("all");
+  const [logsLoading, setLogsLoading] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -27,13 +31,25 @@ export default function SessionsPage() {
     else { const rows = (data || []) as SessionRow[]; setSessions(rows); if (!selectedId && rows[0]) setSelectedId(rows[0].id); }
     setLoading(false);
   }
+  async function loadDiagnostics(id: string) {
+    if (!supabase) return;
+    setLogsLoading(true);
+    const { data, error } = await supabase.from("conversation_logs").select("id,created_at,level,source,event,message,duration_ms,metadata,correlation_id,turn_id").eq("session_id", id).order("created_at", { ascending: false }).limit(250);
+    if (error) setError("Chargement des diagnostics impossible : " + error.message);
+    else setDiagnostics((data || []) as DiagnosticRow[]);
+    setLogsLoading(false);
+  }
   async function loadMessages(id: string) {
     if (!supabase) return;
     const { data, error } = await supabase.from("messages").select("id,speaker,content,created_at").eq("session_id", id).order("created_at", { ascending: true }).limit(500);
     if (error) setError(error.message); else setMessages((data || []) as MessageRow[]);
   }
   useEffect(() => { void load(); }, []);
-  useEffect(() => { if (selectedId) void loadMessages(selectedId); else setMessages([]); }, [selectedId]);
+  useEffect(() => { if (selectedId) { void loadMessages(selectedId); void loadDiagnostics(selectedId); } else { setMessages([]); setDiagnostics([]); } }, [selectedId]);
+
+  const visibleDiagnostics = diagnostics.filter((item) => logFilter === "all" || item.level === logFilter);
+  const errorCount = diagnostics.filter((item) => item.level === "error").length;
+  const warningCount = diagnostics.filter((item) => item.level === "warn").length;
 
   async function setStatus(status: SessionRow["status"]) {
     if (!supabase || !selected) return;
@@ -45,7 +61,7 @@ export default function SessionsPage() {
   return <section className="module-page"><header className="module-header"><div><span className="eyebrow">PILOTAGE & ANALYSE</span><h1>Sessions & Lab</h1><p>Retrouve tes échanges et observe la dynamique de chaque table ronde.</p></div><span className="module-count">{sessions.length} sessions</span></header>
     {error && <div className="api-error">{error}</div>}
     <div className="sessions-layout"><aside className="sessions-list"><div className="project-list-title">HISTORIQUE</div>{loading ? <p className="module-muted">Chargement…</p> : sessions.length === 0 ? <p className="module-muted">Aucune session enregistrée.</p> : sessions.map((session) => <button className={`project-list-item ${selectedId === session.id ? "active" : ""}`} key={session.id} onClick={() => setSelectedId(session.id)}><MessageSquare size={15}/><span><strong>{session.title}</strong><small>{new Date(session.updated_at).toLocaleString("fr-FR")} · {session.status}</small></span></button>)}</aside>
-      <div className="session-detail">{selected ? <><div className="session-detail-head"><div><span className="eyebrow">RAPPORT DE SESSION</span><h2>{selected.title}</h2><p><Clock3 size={13}/> Dernière activité : {new Date(selected.updated_at).toLocaleString("fr-FR")}</p></div><select value={selected.status} onChange={(e) => void setStatus(e.target.value as SessionRow["status"])} aria-label="Statut de session"><option value="active">Active</option><option value="paused">En pause</option><option value="completed">Terminée</option><option value="archived">Archivée</option></select></div><div className="session-metrics"><div><MessageSquare size={16}/><strong>{stats.total}</strong><span>Messages</span></div><div><Users size={16}/><strong>3</strong><span>Agents configurés</span></div><div><Activity size={16}/><strong>{stats.user}</strong><span>Interventions utilisateur</span></div></div><h3>Répartition des interventions</h3><div className="agent-stats">{[["Chloé",stats.chloe,"violet"],["Thomas",stats.thomas,"blue"],["Inès",stats.ines,"amber"]].map(([name,count,color]) => <div className="agent-stat" key={String(name)}><span className={`stat-dot ${color}`}/><strong>{name}</strong><span>{count} réponses</span></div>)}</div><h3>Fil de conversation</h3><div className="session-transcript">{messages.map((message) => <article key={message.id}><div><strong>{message.speaker === "user" ? "Vous" : message.speaker === "chloe" ? "Chloé" : message.speaker === "thomas" ? "Thomas" : "Inès"}</strong><time>{new Date(message.created_at).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })}</time></div><p>{message.content}</p></article>)}</div></> : <div className="module-empty large"><Archive size={28}/><strong>Sélectionne une session</strong><span>Les statistiques et le fil de discussion apparaîtront ici.</span></div>}</div>
+      <div className="session-detail">{selected ? <><div className="session-detail-head"><div><span className="eyebrow">RAPPORT DE SESSION</span><h2>{selected.title}</h2><p><Clock3 size={13}/> Dernière activité : {new Date(selected.updated_at).toLocaleString("fr-FR")}</p></div><select value={selected.status} onChange={(e) => void setStatus(e.target.value as SessionRow["status"])} aria-label="Statut de session"><option value="active">Active</option><option value="paused">En pause</option><option value="completed">Terminée</option><option value="archived">Archivée</option></select></div><div className="session-metrics"><div><MessageSquare size={16}/><strong>{stats.total}</strong><span>Messages</span></div><div><Users size={16}/><strong>3</strong><span>Agents configurés</span></div><div><Activity size={16}/><strong>{stats.user}</strong><span>Interventions utilisateur</span></div></div><h3>Répartition des interventions</h3><div className="agent-stats">{[["Chloé",stats.chloe,"violet"],["Thomas",stats.thomas,"blue"],["Inès",stats.ines,"amber"]].map(([name,count,color]) => <div className="agent-stat" key={String(name)}><span className={`stat-dot ${color}`}/><strong>{name}</strong><span>{count} réponses</span></div>)}</div><h3>Fil de conversation</h3><div className="session-transcript">{messages.map((message) => <article key={message.id}><div><strong>{message.speaker === "user" ? "Vous" : message.speaker === "chloe" ? "Chloé" : message.speaker === "thomas" ? "Thomas" : "Inès"}</strong><time>{new Date(message.created_at).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })}</time></div><p>{message.content}</p></article>)}</div><div className="diagnostics-heading"><div><h3>Diagnostics techniques</h3><p>Événements navigateur, Supabase, orchestration et Gemini Live — sans contenu de conversation.</p></div><button className="outline-button" onClick={() => void loadDiagnostics(selected.id)}><RefreshCw size={13}/> Actualiser</button></div><div className="diagnostics-summary"><span><strong>{diagnostics.length}</strong> événements</span><span className="diag-error"><strong>{errorCount}</strong> erreurs</span><span className="diag-warning"><strong>{warningCount}</strong> avertissements</span></div><div className="diagnostics-filters"><button className={logFilter === "all" ? "active" : ""} onClick={() => setLogFilter("all")}>Tous</button><button className={logFilter === "error" ? "active" : ""} onClick={() => setLogFilter("error")}>Erreurs</button><button className={logFilter === "warn" ? "active" : ""} onClick={() => setLogFilter("warn")}>Avertissements</button><button className={logFilter === "info" ? "active" : ""} onClick={() => setLogFilter("info")}>Infos</button></div><div className="diagnostics-list">{logsLoading ? <p className="module-muted">Chargement des diagnostics…</p> : visibleDiagnostics.length ? visibleDiagnostics.map((item) => <article className={"diagnostic-row level-" + item.level} key={item.id}><div className="diagnostic-row-top"><span className="diagnostic-level"><AlertTriangle size={12}/>{item.level.toUpperCase()}</span><strong>{item.event}</strong><time>{new Date(item.created_at).toLocaleString("fr-FR")}</time></div><p>{item.message}</p><div className="diagnostic-meta"><span>{item.source}</span>{item.duration_ms !== null && <span>{item.duration_ms} ms</span>}{item.turn_id && <span>turn {item.turn_id.slice(0, 8)}</span>}{item.correlation_id && <span>trace {item.correlation_id.slice(0, 8)}</span>}</div></article>) : <p className="module-muted">Aucun événement dans ce filtre. Vérifie que la migration 0006 est appliquée.</p>}</div></> : <div className="module-empty large"><Archive size={28}/><strong>Sélectionne une session</strong><span>Les statistiques et le fil de discussion apparaîtront ici.</span></div>}</div>
     </div>
   </section>;
 }
