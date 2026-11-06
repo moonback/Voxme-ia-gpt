@@ -49,7 +49,7 @@ export function logConversationEvent(input: DiagnosticInput) {
   };
   const writer = level === "error" ? console.error : level === "warn" ? console.warn : level === "debug" ? console.debug : console.info;
   writer("[VOXME]", event);
-  if (!supabase || !input.userId) return;
+  if (!supabase || !input.userId || level === "debug") return;
   void supabase.from("conversation_logs").insert({
     user_id: input.userId, session_id: input.sessionId || null,
     correlation_id: input.correlationId || null, turn_id: input.turnId || null,
