@@ -45,7 +45,7 @@ export class GeminiLiveAudio {
     if (authError || !auth.session) throw new Error("Connecte-toi à VOXME avant de démarrer le vocal.");
     const tokenResponse = await fetch("/api/live/token", {
       method: "POST",
-      headers: { Authorization: `Bearer ${auth.session.access_token}` },
+      headers: { Authorization: `Bearer ${auth.session.access_token}`, "x-request-id": this.correlationId },
     });
     const tokenData = await tokenResponse.json();
     this.log("live.token.response", { httpStatus: tokenResponse.status, ok: tokenResponse.ok });
