@@ -51,7 +51,8 @@ async fn debate(State(state): State<Arc<AppState>>, Json(payload): Json<DebateRe
 
 #[tokio::main]
 async fn main() {
-    let _ = dotenvy::from_path("../.env");\n    dotenvy::dotenv().ok();
+    let _ = dotenvy::from_path("../.env");
+    dotenvy::dotenv().ok();
     tracing_subscriber::fmt().with_env_filter("info").init();
     let port = env::var("API_PORT").ok().and_then(|v| v.parse().ok()).unwrap_or(8080);
     let origin = env::var("FRONTEND_ORIGIN").unwrap_or_else(|_| "http://localhost:5173".into());
